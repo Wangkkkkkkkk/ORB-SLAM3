@@ -923,8 +923,8 @@ vector<cv::KeyPoint> ORBextractor::DistributeOctTree(const vector<cv::KeyPoint>&
 
                 // 对需要划分的节点进行排序，对pair对的第一个元素进行排序，默认是从小到大排序
 				// 优先分裂特征点多的节点，使得特征点密集的区域保留更少的特征点
-                //! 注意这里的排序规则非常重要！会导致每次最后产生的特征点都不一样。建议使用 stable_sort
-                sort(vPrevSizeAndPointerToNode.begin(),vPrevSizeAndPointerToNode.end());
+                //! 注意这里的排序规则非常重要！会导致每次最后产生的特征点都不一样。建议使用 stable_sort -----------------------------------------------------------------------!!!!!!
+                stable_sort(vPrevSizeAndPointerToNode.begin(),vPrevSizeAndPointerToNode.end());
 
 				//遍历这个存储了pair对的vector，注意是从后往前遍历
                 for(int j=vPrevSizeAndPointerToNode.size()-1;j>=0;j--)
