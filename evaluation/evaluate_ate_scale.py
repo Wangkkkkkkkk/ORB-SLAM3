@@ -171,7 +171,7 @@ if __name__=="__main__":
     second_stamps = second_list.keys()
     second_stamps.sort()
     second_xyz_full = numpy.matrix([[float(value)*float(args.scale) for value in second_list[b][0:3]] for b in second_stamps]).transpose()
-    second_xyz_full_aligned = scale * rot * second_xyz_full + trans
+    second_xyz_full_aligned = scale * rot * second_xyz_full + transGT
     
     if args.verbose:
         print "compared_pose_pairs %d pairs"%(len(trans_error))
