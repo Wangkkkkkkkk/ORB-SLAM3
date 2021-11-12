@@ -151,6 +151,8 @@ int ORBmatcher::SearchByProjection(Frame &F, const vector<MapPoint*> &vpMapPoint
                     if(bestLevel==bestLevel2 && bestDist>mfNNratio*bestDist2)
                         continue;
 
+                    F.mvpMatchScore[bestIdx] = bestDist;
+                    
                     if(bestLevel!=bestLevel2 || bestDist<=mfNNratio*bestDist2){
                         F.mvpMapPoints[bestIdx]=pMP;
 

@@ -90,6 +90,89 @@ public:
     // Project MapPoints into KeyFrame using a given Sim3 and search for duplicated MapPoints.
     int Fuse(KeyFrame* pKF, cv::Mat Scw, const std::vector<MapPoint*> &vpPoints, float th, vector<MapPoint *> &vpReplacePoint);
 
+    inline int SearchByProjection_OnePoint(Frame &F, MapPoint *pMP, const float th)
+    {
+        const bool bFactor = th != 1.0;
+
+        if (!pMP->mbTrackInView)
+            return -1;
+
+        if (pMP->isBad())
+            return -1;
+
+        const int &nPredictedLevel = pMP->mnTrackScaleLevel;
+
+        // The size of the window will depend on the viewing direction
+        float r = RadiusByViewingCos(pMP->mTrackViewCos);
+
+        if (bFactor)
+            r *= th;
+
+        const vector<size_t> vIndices =
+            F.GetFeaturesInArea(pMP->mTrackProjX, pMP->mTrackProjY, r * F.mvScaleFactors[nPredictedLevel], nPredictedLevel - 1, nPredictedLevel);
+
+        if (vIndices.empty())
+            return -1;
+
+        cv::Mat MPdescriptor = pMP->GetDescriptor();
+
+        int bestDist = 256;
+        int bestLevel = -1;
+        int bestDist2 = 256;
+        int bestLevel2 = -1;
+        int bestIdx = -1;
+
+        // Get best and second matches with near keypoints
+        for (vector<size_t>::const_iterator vit = vIndices.begin(), vend = vIndices.end(); vit != vend; vit++)
+        {
+            const size_t idx = *vit;
+
+            if (F.mvpMapPoints[idx])
+                if (F.mvpMapPoints[idx]->Observations() > 0)
+                    continue;
+
+            if (F.mvuRight[idx] > 0)
+            {
+                const float er = fabs(pMP->mTrackProjXR - F.mvuRight[idx]);
+                if (er > r * F.mvScaleFactors[nPredictedLevel])
+                    continue;
+            }
+
+            const cv::Mat &d = F.mDescriptors.row(idx);
+
+            const int dist = DescriptorDistance(MPdescriptor, d);
+
+            if (dist < bestDist)
+            {
+                bestDist2 = bestDist;
+                bestDist = dist;
+                bestLevel2 = bestLevel;
+                bestLevel = F.mvKeysUn[idx].octave;
+                bestIdx = idx;
+            }
+            else if (dist < bestDist2)
+            {
+                bestLevel2 = F.mvKeysUn[idx].octave;
+                bestDist2 = dist;
+            }
+        }
+
+        // Apply ratio to second match (only if best and second are in the same scale level)
+        if (bestDist <= TH_HIGH)
+        {
+            if (bestLevel == bestLevel2 && bestDist > mfNNratio * bestDist2)
+                return -1;
+
+            F.mvpMapPoints[bestIdx] = pMP;
+            // store the match score for each frame-to-map match
+            F.mvpMatchScore[bestIdx] = bestDist;
+
+            return bestIdx;
+        }
+        else
+            return -1;
+    }
+
 public:
 
     static const int TH_LOW;

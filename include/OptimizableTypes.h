@@ -44,6 +44,17 @@ public:
         _error = obs-pCamera->project(v1->estimate().map(Xw));
     }
 
+    Eigen::Vector2d Getobs() {
+        Eigen::Vector2d obs(_measurement);
+        return obs;
+    }
+
+    Eigen::Vector3d GetPoint() {
+        const g2o::VertexSE3Expmap* v1 = static_cast<const g2o::VertexSE3Expmap*>(_vertices[0]);
+        Eigen::Vector3d point = v1->estimate().map(Xw);
+        return point;
+    }
+
     bool isDepthPositive() {
         const g2o::VertexSE3Expmap* v1 = static_cast<const g2o::VertexSE3Expmap*>(_vertices[0]);
         return (v1->estimate().map(Xw))(2)>0.0;

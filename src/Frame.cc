@@ -166,6 +166,10 @@ Frame::Frame(const cv::Mat &imLeft, const cv::Mat &imRight, const double &timeSt
 	// 初始化本帧的地图点
     mvpMapPoints = vector<MapPoint*>(N,static_cast<MapPoint*>(NULL));
     mvbOutlier = vector<bool>(N,false);
+    mvbCandidate = vector<bool>(N,true);
+    mvbGoodFeature = vector<bool>(N,false);
+    mvpMatchScore = vector<int>(N,static_cast<int>(999));
+    mvStereoMatched = vector<bool>(N,false);
     mmProjectPoints.clear();// = map<long unsigned int, cv::Point2f>(N, static_cast<cv::Point2f>(NULL));
     mmMatchedInImage.clear();
 
@@ -280,6 +284,10 @@ Frame::Frame(const cv::Mat &imGray, const cv::Mat &imDepth, const double &timeSt
     mmMatchedInImage.clear();
 	// 记录地图点是否为外点，初始化均为外点false
     mvbOutlier = vector<bool>(N,false);
+    mvbCandidate = vector<bool>(N,true);
+    mvbGoodFeature = vector<bool>(N,false);
+    mvpMatchScore = vector<int>(N,static_cast<int>(999));
+    mvStereoMatched = vector<bool>(N,false);
 
     // This is done only for the first Frame (or after a change in the calibration)
 	//  Step 5 计算去畸变后图像边界，将特征点分配到网格中。这个过程一般是在第一帧或者是相机标定参数发生变化之后进行
@@ -387,6 +395,10 @@ Frame::Frame(const cv::Mat &imGray, const double &timeStamp, ORBextractor* extra
     mmMatchedInImage.clear();
 	// 记录地图点是否为外点，初始化均为外点false
     mvbOutlier = vector<bool>(N,false);
+    mvbCandidate = vector<bool>(N,true);
+    mvbGoodFeature = vector<bool>(N,false);
+    mvpMatchScore = vector<int>(N,static_cast<int>(999));
+    mvStereoMatched = vector<bool>(N,false);
 
     // This is done only for the first Frame (or after a change in the calibration)
 	//  Step 5 计算去畸变后图像边界，将特征点分配到网格中。这个过程一般是在第一帧或者是相机标定参数发生变化之后进行
@@ -1563,6 +1575,164 @@ bool Frame::isInFrustumChecks(MapPoint *pMP, float viewingCosLimit, bool bRight)
 
 cv::Mat Frame::UnprojectStereoFishEye(const int &i){
     return mRwc*mvStereo3Dpoints[i]+mOw;
+}
+
+cv::Mat Frame::getTwc() {
+    //
+    cv::Mat Rwc = mTcw.rowRange(0,3).colRange(0,3).t();
+    cv::Mat twc = -Rwc*mTcw.rowRange(0,3).col(3);
+    //
+    cv::Mat Twc = cv::Mat::eye(4,4,CV_32F);
+
+    Rwc.copyTo(Twc.rowRange(0,3).colRange(0,3));
+    twc.copyTo(Twc.rowRange(0,3).col(3));
+
+    return Twc;
+}
+
+int Frame::ComputeStereoMatches_Undistorted(bool isOnline)
+{
+    const int thOrbDist = (ORBmatcher::TH_HIGH+ORBmatcher::TH_LOW)/2;
+
+    const int nRows = mpORBextractorLeft->mvImagePyramid[0].rows;
+
+    if (mvRowIndices.size() != nRows) {
+        PrepareStereoCandidates();
+        std::cout << "redo the stereo candidate preparation!" << std::endl;
+    }
+
+    // Set limits for search
+    const float minZ = mb;
+
+    int nmatched = 0;
+
+    for(int iL=0; iL<N; iL++)
+    {
+        if (isOnline) {
+            // only stereo matching points with associated 3D map points
+            if (this->mvpMapPoints[iL] == NULL || this->mvStereoMatched[iL] == true) {
+                continue ;
+            }
+        }
+        else {
+            // stereo matching the rest of points
+            if (this->mvStereoMatched[iL] == true) {
+                continue ;
+            }
+        }
+
+        float minD = 0;
+        float maxD = mbf/minZ;
+        this->mvStereoMatched[iL] = true;
+
+        const cv::KeyPoint &kpL = mvKeysUn[iL];
+        const int &levelL = kpL.octave;
+        const float &vL = kpL.pt.y;
+        const float &uL = kpL.pt.x;
+
+        if (vL < 0 || vL > nRows-1)
+            continue;
+
+        const vector<size_t> &vCandidates = mvRowIndices[int(vL)];
+
+        if(vCandidates.empty())
+            continue;
+
+        // reduce the range of stereo matching for map-matched points
+        if (this->mvpMapPoints[iL] != NULL) {
+            MapPoint * pMP = this->mvpMapPoints[iL];
+            if (!pMP->isBad()) {
+                cv::Mat Pw = pMP->GetWorldPos(), Pc;
+                if (WorldToCameraPoint(Pw, Pc) == true) {
+                    //
+                    float disp = float(mbf) / Pc.at<float>(2);
+                    minD = std::max(disp - float(50), 0.0f);
+                    maxD = std::min(disp + float(50), float(mbf)/float(mb));
+                }
+            }
+        }
+        const float minU = uL-maxD;
+        const float maxU = uL-minD;
+
+        if(maxU<mnMinX)
+            continue;
+
+        int bestDist = ORBmatcher::TH_HIGH;
+        size_t bestIdxR = 0;
+
+        const cv::Mat &dL = mDescriptors.row(iL);
+
+        // Compare descriptor to right keypoints
+        for(size_t iC=0; iC<vCandidates.size(); iC++)
+        {
+            const size_t iR = vCandidates[iC];
+            const cv::KeyPoint &kpR = mvKeysRightUn[iR];
+
+            if(kpR.octave<levelL-1 || kpR.octave>levelL+1)
+                continue;
+
+            const float &uR = kpR.pt.x;
+
+            if(uR>=minU && uR<=maxU)
+            {
+                const cv::Mat &dR = mDescriptorsRight.row(iR);
+                const int dist = ORBmatcher::DescriptorDistance(dL,dR);
+
+                if(dist<bestDist)
+                {
+                    bestDist = dist;
+                    bestIdxR = iR;
+                }
+            }
+        }
+
+        // Subpixel match by correlation
+        if(bestDist<thOrbDist)
+        {
+            float bestuR = mvKeysRightUn[bestIdxR].pt.x;
+            float disparity = (uL-bestuR);
+            if(disparity>=minD && disparity<maxD)
+            {
+                if(disparity<=0)
+                {
+                    disparity=0.01;
+                    bestuR = uL-0.01;
+                }
+                mvDepth[iL]=mbf/disparity;
+                mvuRight[iL] = bestuR;
+                mvDistIdx.push_back(pair<int,int>(bestDist,iL));
+            }
+
+        }
+
+        nmatched ++;
+    }
+
+    if (!isOnline) {
+
+        //
+        if (mvDistIdx.empty())
+            return nmatched;
+
+        sort(mvDistIdx.begin(),mvDistIdx.end());
+        const float median = mvDistIdx[mvDistIdx.size()/2].first;
+        const float thDist = 1.5f*1.4f*median;
+        // reduce the number of stereo matchings being dropped
+        //        const float thDist = 3.0f*median;
+
+        for(int i=mvDistIdx.size()-1;i>=0;i--)
+        {
+            if(mvDistIdx[i].first<thDist)
+                break;
+            else
+            {
+                mvuRight[mvDistIdx[i].second]=-1;
+                mvDepth[mvDistIdx[i].second]=-1;
+                nmatched --;
+            }
+        }
+    }
+    return nmatched;
 }
 
 } //namespace ORB_SLAM

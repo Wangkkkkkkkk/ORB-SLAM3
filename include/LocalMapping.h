@@ -194,6 +194,9 @@ protected:
 
     //DEBUG
     ofstream f_lm;
+
+    // Good Feature Match
+    arma::wall_clock timer;
 };
 
 } //namespace ORB_SLAM

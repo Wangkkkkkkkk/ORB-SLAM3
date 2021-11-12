@@ -24,19 +24,23 @@
 #include<opencv2/features2d/features2d.hpp>
 #include <opencv2/video/tracking.hpp>
 
-#include"Viewer.h"
-#include"FrameDrawer.h"
-#include"Atlas.h"
-#include"LocalMapping.h"
-#include"LoopClosing.h"
-#include"Frame.h"
+#include "Viewer.h"
+#include "FrameDrawer.h"
+#include "Atlas.h"
+#include "LocalMapping.h"
+#include "LoopClosing.h"
+#include "Frame.h"
 #include "ORBVocabulary.h"
-#include"KeyFrameDatabase.h"
-#include"ORBextractor.h"
+#include "KeyFrameDatabase.h"
+#include "ORBextractor.h"
 #include "Initializer.h"
 #include "MapDrawer.h"
 #include "System.h"
 #include "ImuTypes.h"
+
+#include "Hashing.h"
+#include "ChArUco.h"
+#include "Observability.h"
 
 #include "GeometricCamera.h"
 
@@ -161,6 +165,13 @@ public:
 
     bool mbWriteStats;
 
+    // Good Feature Match
+    ORB_SLAM3::Observability * mObsHandler;    // Observability computation
+    arma::mat mCurrentInfoMat;      // 当前帧信息矩阵
+    size_t mFrameAfterInital;       // 初始化后的帧计数器
+    double camera_fps;              // 相机帧率
+    size_t num_good_constr_predef;  // 局部地图跟踪需要的特征点数
+
 #ifdef REGISTER_TIMES
     void LocalMapStats2File();
     void TrackStats2File();
@@ -222,6 +233,11 @@ protected:
     // Reset IMU biases and compute frame velocity
     void ComputeGyroBias(const vector<Frame*> &vpFs, float &bwx,  float &bwy, float &bwz);
     void ComputeVelocitiesAccBias(const vector<Frame*> &vpFs, float &bax,  float &bay, float &baz);
+
+    // Good Feature Match 
+    bool TrackLocalMapByGF();
+    void UpdateLocalMapByGF();
+    int SearchLocalPointsByGF();
 
 
     bool mbMapUpdated;

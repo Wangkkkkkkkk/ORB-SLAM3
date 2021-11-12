@@ -28,6 +28,8 @@
 #include "ImuTypes.h"
 #include "ORBVocabulary.h"
 #include "Config.h"
+#include "KeyFrame.h"
+#include "ORBextractor.h"
 
 #include <mutex>
 #include <opencv2/opencv.hpp>
@@ -90,6 +92,55 @@ public:
         return mRwc.clone();
     }
 
+    // Good Feature Match
+    inline void PrepareStereoCandidates() {
+
+        mvuRight = vector<float>(N,-1.0f);
+        mvDepth = vector<float>(N,-1.0f);
+
+        mvStereoMatched = vector<bool>(N,false);
+
+        const int nRows = mpORBextractorLeft->mvImagePyramid[0].rows;
+
+        //Assign keypoints to row table
+        mvRowIndices = vector<vector<size_t> >(nRows,vector<size_t>());
+
+        for(int i=0; i<nRows; i++)
+            mvRowIndices[i].reserve(200);
+
+        const int Nr = mvKeysRightUn.size();
+
+        for(int iR=0; iR<Nr; iR++)
+        {
+            const cv::KeyPoint &kp = mvKeysRightUn[iR];
+            const float &kpY = kp.pt.y;
+
+            const float r = 2.0f*mvScaleFactors[mvKeysRightUn[iR].octave];
+            const int maxr = std::min(float(nRows-1), ceil(kpY+r));
+            const int minr = std::max(0.0f, floor(kpY-r));
+
+            for(int yi=minr;yi<=maxr;yi++)
+                mvRowIndices[yi].push_back(iR);
+        }
+
+        // For each left keypoint search a match in the right image
+        mvDistIdx.reserve(N);
+        mvDistIdx.clear();
+    }
+
+    inline bool WorldToCameraPoint(const cv::Mat Pw, cv::Mat & Pc){
+
+        // 3D in camera coordinates
+        Pc = mRcw*Pw+mtcw;
+
+        //        cout << "Pc = " << Pc.at<float>(0) << ", " << Pc.at<float>(1) << ", " << Pc.at<float>(2) << endl;
+
+        if (Pc.at<float>(2) <= 0.0f)
+            return false;
+
+        return true;
+    }
+
     cv::Mat GetImuPosition();
     cv::Mat GetImuRotation();
     cv::Mat GetImuPose();
@@ -123,6 +174,12 @@ public:
 
     bool imuIsPreintegrated();
     void setIntegrated();
+
+    cv::Mat getTwc();
+
+    int ComputeStereoMatches_Undistorted(bool isOnline = false);
+
+
 
     cv::Mat mRwc;
     cv::Mat mOw;
@@ -164,6 +221,7 @@ public:
     // In the RGB-D case, RGB images can be distorted.
     std::vector<cv::KeyPoint> mvKeys, mvKeysRight;
     std::vector<cv::KeyPoint> mvKeysUn;
+    std::vector<cv::KeyPoint> mvKeysRightUn;
 
     // Corresponding stereo coordinate and depth for each keypoint.
     std::vector<MapPoint*> mvpMapPoints;
@@ -243,6 +301,12 @@ public:
 
     int mnDataset;
 
+    // Good Feature Match
+    std::vector<bool> mvStereoMatched;
+    vector<vector<size_t> > mvRowIndices;
+
+    vector<pair<int, int> > mvDistIdx;
+
 #ifdef REGISTER_TIMES
     double mTimeORB_Ext;
     double mTimeStereoMatch;
@@ -308,6 +372,12 @@ public:
     cv::Mat UnprojectStereoFishEye(const int &i);
 
     cv::Mat imgLeft, imgRight;
+
+    // Good Feature Match
+    std::vector<bool> mvbCandidate;
+    std::vector<int> mvpMatchScore;
+    std::vector<bool> mvbGoodFeature;
+
 
     void PrintPointDistribution(){
         int left = 0, right = 0;

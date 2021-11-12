@@ -26,6 +26,8 @@
 #include <Eigen/Sparse>
 #include <Eigen/Dense>
 #include <unsupported/Eigen/MatrixFunctions>
+#include <pangolin/pangolin.h>
+#include <opencv2/core/core.hpp>
 
 #include "Thirdparty/g2o/g2o/core/sparse_block_matrix.h"
 #include "Thirdparty/g2o/g2o/core/block_solver.h"
@@ -42,6 +44,7 @@
 
 #include "OptimizableTypes.h"
 
+using namespace cv;
 
 namespace ORB_SLAM3
 {
@@ -939,6 +942,11 @@ void Optimizer::FullInertialBA(Map *pMap, int its, const bool bFixLocal, const l
     /** 
  * @brief 位姿优化，纯视觉时使用。优化目标：单帧的位姿 
  * @param pFrame 待优化的帧
+ * 
+ * 3D-2D 最小化重投影误差 e = (u ,v) - project(Tcw * Pw) \n 
+ * 
+ * 
+ * 
  */
 int Optimizer::PoseOptimization(Frame *pFrame)
 {
@@ -1272,7 +1280,7 @@ int Optimizer::PoseOptimization(Frame *pFrame)
 
         if(optimizer.edges().size()<10)
             break;
-    }    
+    }
 
     // Recover optimized pose and return number of inliers
     // Step 5 得到优化后的当前帧的位姿

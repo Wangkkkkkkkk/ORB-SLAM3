@@ -126,6 +126,8 @@ void MapDrawer::DrawMapPoints()
     const vector<MapPoint*> &vpMPs = mpAtlas->GetAllMapPoints();
     //取出mvpReferenceMapPoints，也即局部地图d点
     const vector<MapPoint*> &vpRefMPs = mpAtlas->GetReferenceMapPoints();
+    //取出优地图点
+    
 
     set<MapPoint*> spRefMPs(vpRefMPs.begin(), vpRefMPs.end());
 

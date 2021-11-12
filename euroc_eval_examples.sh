@@ -2,18 +2,24 @@
 pathDatasetEuroc='/home/kai/file/VO_SpeedUp/Dataset/EuRoc' #Example, it is necesary to change it by the dataset path
 
 # Single Session Example (Pure visual)
-echo "Launching MH01 with Stereo sensor"
-./Examples/Stereo/stereo_euroc ./Vocabulary/ORBvoc.txt ./Examples/Stereo/EuRoC.yaml "$pathDatasetEuroc"/MH05 ./Examples/Stereo/EuRoC_TimeStamps/MH05.txt dataset-MH05_stereo
-echo "------------------------------------"
-echo "Evaluation of MH01 trajectory with Stereo sensor"
-python evaluation/evaluate_ate_scale.py evaluation/Ground_truth/EuRoC_left_cam/MH05_GT.txt f_dataset-MH05_stereo.txt --plot MH05_stereo.pdf --verbose2
+# echo "Launching MH01 with Stereo sensor"
+# ./Examples/Stereo/stereo_euroc ./Vocabulary/ORBvoc.txt ./Examples/Stereo/EuRoC.yaml "$pathDatasetEuroc"/MH05 ./Examples/Stereo/EuRoC_TimeStamps/MH05.txt dataset-MH05_stereo
+# echo "------------------------------------"
+# echo "Evaluation of MH01 trajectory with Stereo sensor"
+# python evaluation/evaluate_ate_scale.py evaluation/Ground_truth/EuRoC_left_cam/MH05_GT.txt f_dataset-MH05_stereo.txt --plot MH05_stereo.pdf --verbose2
 
 # Single Session Example (Pure visual)
 # echo "Launching MH01 with mono sensor"
-# ./Examples/Monocular/mono_euroc ./Vocabulary/ORBvoc.txt ./Examples/Monocular/EuRoC.yaml "$pathDatasetEuroc"/MH01 ./Examples/Monocular/EuRoC_TimeStamps/MH01.txt dataset-MH01_mono 
+# ./Examples/Monocular/mono_euroc ./Vocabulary/ORBvoc.txt ./Examples/Monocular/EuRoC.yaml "$pathDatasetEuroc"/MH03 ./Examples/Monocular/EuRoC_TimeStamps/MH03.txt dataset-MH03_mono 
 # echo "------------------------------------"
 # echo "Evaluation of MH01 trajectory with mono sensor"
-# python evaluation/evaluate_ate_scale.py evaluation/Ground_truth/EuRoC_left_cam/MH01_GT.txt f_dataset-MH01_mono.txt --plot MH01_mono.pdf --verbose2
+# python evaluation/evaluate_ate_scale.py evaluation/Ground_truth/EuRoC_left_cam/MH03_GT.txt f_dataset-MH03_mono.txt --plot MH03_mono.pdf --verbose2
+
+echo "Launching V101 with mono sensor"
+./Examples/Monocular/mono_euroc ./Vocabulary/ORBvoc.txt ./Examples/Monocular/EuRoC.yaml "$pathDatasetEuroc"/V101 ./Examples/Monocular/EuRoC_TimeStamps/V101.txt dataset-V101_mono 
+# echo "------------------------------------"
+# echo "Evaluation of V102 trajectory with mono sensor"
+python evaluation/evaluate_ate_scale.py evaluation/Ground_truth/EuRoC_left_cam/V101_GT.txt f_dataset-V101_mono.txt --plot V101_mono.pdf --verbose2
 
 # mono evaluation
 # echo "Evaluation of MH01 trajectoty with mono sensor"

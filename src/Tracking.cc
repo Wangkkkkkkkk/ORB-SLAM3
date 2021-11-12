@@ -58,7 +58,7 @@ Tracking::Tracking(System *pSys, ORBVocabulary* pVoc, FrameDrawer *pFrameDrawer,
     mbOnlyTracking(false), mbMapUpdated(false), mbVO(false), mpORBVocabulary(pVoc), mpKeyFrameDB(pKFDB),
     mpInitializer(static_cast<Initializer*>(NULL)), mpSystem(pSys), mpViewer(NULL),
     mpFrameDrawer(pFrameDrawer), mpMapDrawer(pMapDrawer), mpAtlas(pAtlas), mnLastRelocFrameId(0), time_recently_lost(5.0), time_recently_lost_visual(2.0),
-    mnInitialFrameId(0), mbCreatedMap(false), mnFirstFrameId(0), mpCamera2(nullptr)
+    mnInitialFrameId(0), mbCreatedMap(false), mnFirstFrameId(0), mpCamera2(nullptr), num_good_constr_predef(200)
 {
     // Load camera parameters from settings file
     // Step 1 从配置文件中加载相机参数
@@ -108,6 +108,22 @@ Tracking::Tracking(System *pSys, ORBVocabulary* pVoc, FrameDrawer *pFrameDrawer,
 
         }
     }
+
+    // Good Feature Match
+    mCurrentInfoMat.set_size(7, 7);
+    mCurrentInfoMat.zeros();
+
+    mFrameAfterInital = 0;
+    camera_fps = 30;
+
+    float fx = fSettings["Camera.fx"];
+    float fy = fSettings["Camera.fy"];
+    float cx = fSettings["Camera.cx"];
+    float cy = fSettings["Camera.cy"];
+    int nRows= fSettings["Camera2.nRows"];
+    int nCols= fSettings["Camera2.nCols"];
+
+    mObsHandler = new Observability(fx, fy, nRows, nCols, cx, cy, 0, 0, sensor);
 
 #ifdef REGISTER_TIMES
     vdRectStereo_ms.clear();
@@ -1945,6 +1961,8 @@ void Tracking::Track()
         // Step 6 系统成功初始化，下面是具体跟踪过程
         bool bOK;
 
+        mFrameAfterInital++;
+
 #ifdef REGISTER_TIMES
         std::chrono::steady_clock::time_point time_StartPosePred = std::chrono::steady_clock::now();
 #endif
@@ -2213,7 +2231,7 @@ void Tracking::Track()
             if(bOK)
             {
                 // 局部地图跟踪
-                bOK = TrackLocalMap();
+                bOK = TrackLocalMapByGF();
 
             }
             if(!bOK)
@@ -2225,7 +2243,7 @@ void Tracking::Track()
             // a local map and therefore we do not perform TrackLocalMap(). Once the system relocalizes
             // the camera we will use the local map again.
             if(bOK && !mbVO)
-                bOK = TrackLocalMap();
+                bOK = TrackLocalMapByGF();
         }
         // 到此为止跟踪确定位姿阶段结束，下面开始做收尾工作和为下一帧做准备
 
@@ -4933,5 +4951,278 @@ int Tracking::GetMatchesInliers()
 {
     return mnMatchesInliers;
 }
+
+/*
+ * @brief 用基于Good Feature Match来进行局部地图跟踪
+ *
+ * 
+*/
+bool Tracking::TrackLocalMapByGF()
+{
+    arma::wall_clock timer;
+    // mTrackedFr++;
+
+// #ifdef REGISTER_TIMES
+//     std::chrono::steady_clock::time_point time_StartLMUpdate = std::chrono::steady_clock::now();
+// #endif
+
+    // // Step 1：更新局部关键帧 mvpLocalKeyFrames 和局部地图点 mvpLocalMapPoints
+    UpdateLocalMapByGF();
+// #ifdef REGISTER_TIMES
+//     std::chrono::steady_clock::time_point time_StartSearchLP = std::chrono::steady_clock::now();
+
+//     double timeUpdatedLM_ms = std::chrono::duration_cast<std::chrono::duration<double,std::milli> >(time_StartSearchLP - time_StartLMUpdate).count();
+//     vdUpdatedLM_ms.push_back(timeUpdatedLM_ms);
+// #endif
+
+    int mnMatchesInit = SearchLocalPointsByGF();
+
+    double time_srh_ref = timer.toc();
+
+    double time_stereo = 0;
+
+    // timer.tic();
+    // int nStereo = mCurrentFrame.ComputeStereoMatches_Undistorted(true);
+    // //    cout << "func TrackLocalMap: number of points being stereo matched = " << nStereo << "             "  << endl;
+    // time_stereo = timer.toc();
+
+    timer.tic();
+    // Optimize Pose
+    Optimizer::PoseOptimization(&mCurrentFrame);
+    mnMatchesInliers = 0;
+    double time_opt = timer.toc();
+
+    timer.tic();
+    // Update MapPoints Statistics
+    for(int i=0; i<mCurrentFrame.N; i++)
+    {
+        if(mCurrentFrame.mvpMapPoints[i])
+        {
+            if(!mCurrentFrame.mvbOutlier[i])
+            {
+                mCurrentFrame.mvpMapPoints[i]->IncreaseFound();
+                if(!mbOnlyTracking)
+                {
+                    if(mCurrentFrame.mvpMapPoints[i]->Observations()>0)
+                        mnMatchesInliers++;
+                }
+                else
+                    mnMatchesInliers++;
+            }
+            else if(mSensor!=System::MONOCULAR)
+                mCurrentFrame.mvpMapPoints[i] = static_cast<MapPoint*>(NULL);
+        }
+    }
+    double time_post = timer.toc();
+
+    if(mCurrentFrame.mnId < mnLastRelocFrameId+mMaxFrames && mnMatchesInliers<25)
+        return false;
+
+    if(mnMatchesInliers<15)
+        return false;
+    else
+        return true;
+}
+
+void Tracking::UpdateLocalMapByGF()
+{
+    // 设置参考地图点用于绘图显示局部地图点（红色）
+    mpAtlas->SetReferenceMapPoints(mvpLocalMapPoints);
+
+    // 用共视图来更新局部关键帧
+    UpdateLocalKeyFrames();
+
+    // 用共视图来更新局部地图点
+
+// #ifdef LOCAL_SEARCH_USING_HASHING
+//     arma::wall_clock timer;
+//     timer.tic();
+//     //    UpdateReferencePointsByHashing();
+//     //        if(mCurrentFrame.mTimeStamp - timestamp_first_frame > 5.0)
+
+//     //    if (mpLocalMapper->stopRequested() || mpLocalMapper->isStopped())
+//     //    {
+//     //        UpdateLocalPointsByHashing(eLocalMapSet::CovisOnly);
+//     //    }
+//     //    else
+//     //    {
+
+//     if (mFrameAfterInital >= camera_fps * TIME_INIT_TRACKING || mvpLocalMapPoints.size() > MAP_SIZE_TRIGGER_HASHING )// || logCurrentFrame.lmk_num_frame > this->num_good_constr_predef)
+//     {
+//         // cout<<"Collect Local Map with Multi-Index Hasing!"<<endl;
+//         UpdateLocalPointsByHashing(eLocalMapSet::Combined);
+//     }
+//     else
+//     {
+//         //	    cout<<"Collect Local Map with Co-Visibility!"<<endl;
+//         UpdateLocalPointsByHashing(eLocalMapSet::CovisOnly);
+//     }
+//     //    }
+
+//     logCurrentFrame.time_hash_query = timer.toc();
+
+// #else
+    UpdateLocalPoints();
+// #endif
+
+    // logCurrentFrame.lmk_localmap_comb = mvpLocalMapPoints.size();
+
+}
+
+/**
+ * @brief 基于Good Feature Match用局部地图点进行投影匹配，得到更多的匹配关系
+ * 
+ */
+int Tracking::SearchLocalPointsByGF()
+{
+    int nAlreadyMatched = 0;
+
+    arma::wall_clock timer;
+
+    mCurrentInfoMat = arma::eye( size(mCurrentInfoMat) ) * 0.00001;
+
+    if (mFrameAfterInital > camera_fps * 2 && mCurrentFrame.mnId >= mnLastRelocFrameId+2) {
+        //    cout << "update pose info in obs class" << endl;
+        // NOTE
+        // there is no need to do motion prediction again, since it's already be
+        // predicted and somewhat optimzed in the 1st stage of pose tracking
+        // 无需再次进行运动预测，因为它已经在姿势跟踪的第一阶段进行了预测和优化
+        if(!mLastFrame.mTcw.empty()) {
+            mObsHandler->updatePWLSVec(mLastFrame.mTimeStamp, mLastFrame.mTcw,
+                                       mCurrentFrame.mTimeStamp, mCurrentFrame.getTwc());
+        }
+        //    cout << "propagate pose info in obs class" << endl;
+        // NOTE
+        // instead of using actual time between consequtive frames, we construct virtual frame with slightly longer horizon;
+        // 我们不使用连续帧之间的实际时间，而是构建视野稍长的虚拟帧；
+        // the motivation being: reducing the size of matrix to 2-segments (which is the minimim-size); meanwhile preserving the spectral property
+        // 动机是：将矩阵的大小减少到 2 段（这是最小大小）； 同时保留光谱特性
+        mObsHandler->predictPWLSVec( (mCurrentFrame.mTimeStamp - mLastFrame.mTimeStamp), 1 );
+        mObsHandler->mKineIdx = 0;
+        mObsHandler->mnFrameId = mCurrentFrame.mnId;
+
+        mObsHandler->pFrame = &mCurrentFrame;
+
+        mObsHandler->runMatrixBuilding(ORB_SLAM3::FRAME_INFO_MATRIX, 0.002, true, false);
+    }
+
+    // Do not search map points already matched
+    for(vector<MapPoint*>::iterator vit=mCurrentFrame.mvpMapPoints.begin(), vend=mCurrentFrame.mvpMapPoints.end(); vit!=vend; vit++)
+    {
+        MapPoint* pMP = *vit;
+        if(pMP)
+        {
+            if(pMP->isBad())
+            {
+                *vit = static_cast<MapPoint*>(NULL);
+            }
+            else
+            {
+                pMP->IncreaseVisible();
+                pMP->mnLastFrameSeen = mCurrentFrame.mnId;
+                pMP->mbTrackInView = false;
+
+#if defined GOOD_FEATURE_MAP_MATCHING && defined FRAME_MATCHING_INFO_PRIOR
+                if (pMP->updateAtFrameId == mCurrentFrame.mnId)
+                    mCurrentInfoMat += pMP->ObsMat;
+#endif
+                nAlreadyMatched += 2;
+            }
+        }
+    }
+
+    int nToMatch=0;
+    cout<< "--- nalreadymatched number = " << nAlreadyMatched <<endl;
+    mObsHandler->mLeftMapPoints.clear();
+    mObsHandler->mbNeedVizCheck = false;
+    double time_total_match = 0.015; // 1.0; 
+    int num_to_match = this->num_good_constr_predef - nAlreadyMatched; // 50;  //
+    if (num_to_match <= 0) {
+        // skip the rest
+        for (size_t i=0; i<mvpLocalMapPoints.size(); ++i) {
+            if (mvpLocalMapPoints[i] == NULL)
+                continue ;
+            if (mvpLocalMapPoints[i]->isBad())
+                continue ;
+            if(mvpLocalMapPoints[i]->mnLastFrameSeen == mCurrentFrame.mnId)
+                continue;
+            if (mvpLocalMapPoints[i]->mbTrackInView == false)
+                continue ;
+            //
+            mObsHandler->mLeftMapPoints.push_back(mvpLocalMapPoints[i]);
+        }
+        mObsHandler->mbNeedVizCheck = true;
+        //
+        return nAlreadyMatched;
+    }
+
+    double time_Viz = 0;
+    timer.tic();
+
+    // Project points in frame and check its visibility
+    // 在框架中投影点并检查其可见性
+    for(vector<MapPoint*>::iterator vit=mvpLocalMapPoints.begin(), vend=mvpLocalMapPoints.end(); vit!=vend; vit++)
+    {
+        MapPoint* pMP = *vit;
+        if(pMP->mnLastFrameSeen == mCurrentFrame.mnId)
+            continue;
+        if(pMP->isBad())
+            continue;
+
+        time_Viz = timer.toc();
+        if (time_Viz > time_total_match / 2.0) {
+            //
+            mObsHandler->mLeftMapPoints = vector<MapPoint*>(vit, vend);
+            mvpLocalMapPoints.erase(vit, vend);
+            mObsHandler->mbNeedVizCheck = true;
+            break ;
+        }
+
+        // Project (this fills MapPoint variables for matching)
+        if (mCurrentFrame.isInFrustum(pMP, 0.5))
+        {
+            pMP->IncreaseVisible();
+            nToMatch++;
+        }
+    }
+
+    // Here is the place to inject Obs computation; to reduce the load of computation, we might need to approximate exact point Obs with region;
+    // Following are the time cost of each step in TrackLocalMap:
+    cout<< "--- ntomatch number = " << nToMatch <<endl;
+    int nMatched = 0;
+    if(nToMatch>0)
+    {
+        timer.tic();
+
+        ORBmatcher matcher(0.8);
+
+        int th = 1;  // 1.5; // NOTE try increase the window size for vicon seq
+        if(mSensor==System::RGBD)
+            th=3;
+        // If the camera has been relocalised recently, perform a coarser search
+        if(mCurrentFrame.mnId < mnLastRelocFrameId+2) {
+            th=5;
+            nMatched = matcher.SearchByProjection(mCurrentFrame,mvpLocalMapPoints,th);
+        }
+        else if (mFrameAfterInital <= camera_fps * 2 || nToMatch < 400) { // 800)
+            nMatched = matcher.SearchByProjection(mCurrentFrame,mvpLocalMapPoints,th);
+        }
+        else {
+            // try computing Jacobian for each map point
+            mObsHandler->mMapPoints = &mvpLocalMapPoints;
+            mObsHandler->runMatrixBuilding(ORB_SLAM3::MAP_INFO_MATRIX, (time_total_match-time_Viz)/2, true, false);
+            
+            double time_Mat_Online = timer.toc();
+            // logCurrentFrame.time_mat_online = time_Mat_Online;
+            nMatched = mObsHandler->runActiveMapMatching(&mCurrentFrame, ORB_SLAM3::FRAME_INFO_MATRIX, mCurrentInfoMat,
+                                                         th,matcher,num_to_match,time_total_match-time_Mat_Online-time_Viz);
+        }
+        double time_Match = timer.toc();
+    }
+    cout<< "--- nmatched number = " << nMatched <<endl;
+
+    return nAlreadyMatched + nMatched;
+}
+
 
 } //namespace ORB_SLAM

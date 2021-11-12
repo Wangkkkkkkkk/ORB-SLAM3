@@ -24,6 +24,8 @@
 #include"Frame.h"
 #include"Map.h"
 
+#include "armadillo"
+
 #include<opencv2/core/core.hpp>
 #include<mutex>
 
@@ -144,6 +146,25 @@ public:
 
     unsigned int mnOriginMapId;
 
+    // Good Feature Match
+    arma::mat H_meas;
+    arma::mat H_proj;
+    arma::mat ObsMat;
+    arma::vec ObsVector;
+    double ObsScore;
+    int ObsRank;
+    //
+    float u_proj, v_proj;
+    //
+    long unsigned int matchedAtFrameId;
+    long unsigned int updateAtFrameId;
+    long unsigned int goodAtFrameId;
+    long unsigned int mnUsedForLocalMap;
+
+    // Tracking counters
+     int mnVisible;
+     int mnFound;
+
 protected:    
 
      // Position in absolute coordinates
@@ -162,10 +183,6 @@ protected:
 
      // Reference KeyFrame
      KeyFrame* mpRefKF;
-
-     // Tracking counters
-     int mnVisible;
-     int mnFound;
 
      // Bad flag (we do not currently erase MapPoint from memory)
      bool mbBad;
