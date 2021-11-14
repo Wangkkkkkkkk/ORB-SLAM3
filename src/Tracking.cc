@@ -125,6 +125,10 @@ Tracking::Tracking(System *pSys, ORBVocabulary* pVoc, FrameDrawer *pFrameDrawer,
 
     mObsHandler = new Observability(fx, fy, nRows, nCols, cx, cy, 0, 0, sensor);
 
+    mvpQueriedFeatures.resize(NUM_TOTAL_HASHTABLES);
+    std::fill(mvpQueriedFeatures.begin(), mvpQueriedFeatures.begin() + NUM_ACTIVE_HASHTABLES, NUM_ADDITIONAL_FEATURES + NUM_CANDIDATE_FEATURES);
+    std::fill(mvpQueriedFeatures.begin() + NUM_ACTIVE_HASHTABLES, mvpQueriedFeatures.end(), 0);
+
 #ifdef REGISTER_TIMES
     vdRectStereo_ms.clear();
     vdORBExtract_ms.clear();
@@ -4982,7 +4986,7 @@ bool Tracking::TrackLocalMapByGF()
     double time_stereo = 0;
 
     // timer.tic();
-    // int nStereo = mCurrentFrame.ComputeStereoMatches_Undistorted(true);
+    int nStereo = mCurrentFrame.ComputeStereoMatches_Undistorted(true);
     // //    cout << "func TrackLocalMap: number of points being stereo matched = " << nStereo << "             "  << endl;
     // time_stereo = timer.toc();
 
@@ -5046,26 +5050,21 @@ void Tracking::UpdateLocalMapByGF()
 //     //    }
 //     //    else
 //     //    {
+    // cout<< "--- mvp local map points number = " << mvpLocalMapPoints.size() <<endl;
+    // if (mFrameAfterInital >= camera_fps * 2 || mvpLocalMapPoints.size() > 2000 )// || logCurrentFrame.lmk_num_frame > this->num_good_constr_predef)
+    // {
+    //     // cout<<"Collect Local Map with Multi-Index Hasing!"<<endl;
+    //     UpdateLocalPointsByHashing(eLocalMapSet::Combined);
+    // }
+    // else
+    // {
+    //     // cout<<"Collect Local Map with Co-Visibility!"<<endl;
+    //     UpdateLocalPointsByHashing(eLocalMapSet::CovisOnly);
+    // }
 
-//     if (mFrameAfterInital >= camera_fps * TIME_INIT_TRACKING || mvpLocalMapPoints.size() > MAP_SIZE_TRIGGER_HASHING )// || logCurrentFrame.lmk_num_frame > this->num_good_constr_predef)
-//     {
-//         // cout<<"Collect Local Map with Multi-Index Hasing!"<<endl;
-//         UpdateLocalPointsByHashing(eLocalMapSet::Combined);
-//     }
-//     else
-//     {
-//         //	    cout<<"Collect Local Map with Co-Visibility!"<<endl;
-//         UpdateLocalPointsByHashing(eLocalMapSet::CovisOnly);
-//     }
-//     //    }
-
-//     logCurrentFrame.time_hash_query = timer.toc();
-
-// #else
     UpdateLocalPoints();
-// #endif
 
-    // logCurrentFrame.lmk_localmap_comb = mvpLocalMapPoints.size();
+    // mpAtlas->SetReferenceMapPoints(mvpLocalMapPoints);
 
 }
 
@@ -5081,7 +5080,7 @@ int Tracking::SearchLocalPointsByGF()
 
     mCurrentInfoMat = arma::eye( size(mCurrentInfoMat) ) * 0.00001;
 
-    if (mFrameAfterInital > camera_fps * 2 && mCurrentFrame.mnId >= mnLastRelocFrameId+2) {
+    if (mFrameAfterInital > camera_fps * 5 && mCurrentFrame.mnId >= mnLastRelocFrameId+2) {
         //    cout << "update pose info in obs class" << endl;
         // NOTE
         // there is no need to do motion prediction again, since it's already be
@@ -5101,9 +5100,8 @@ int Tracking::SearchLocalPointsByGF()
         mObsHandler->mKineIdx = 0;
         mObsHandler->mnFrameId = mCurrentFrame.mnId;
 
-        mObsHandler->pFrame = &mCurrentFrame;
-
-        mObsHandler->runMatrixBuilding(ORB_SLAM3::FRAME_INFO_MATRIX, 0.002, true, false);
+        // mObsHandler->pFrame = &mCurrentFrame;
+        // mObsHandler->runMatrixBuilding(ORB_SLAM3::FRAME_INFO_MATRIX, 0.002, true, false);
     }
 
     // Do not search map points already matched
@@ -5137,6 +5135,7 @@ int Tracking::SearchLocalPointsByGF()
     mObsHandler->mbNeedVizCheck = false;
     double time_total_match = 0.015; // 1.0; 
     int num_to_match = this->num_good_constr_predef - nAlreadyMatched; // 50;  //
+    cout<< "--- num to match : " << num_to_match <<endl;
     if (num_to_match <= 0) {
         // skip the rest
         for (size_t i=0; i<mvpLocalMapPoints.size(); ++i) {
@@ -5161,6 +5160,7 @@ int Tracking::SearchLocalPointsByGF()
 
     // Project points in frame and check its visibility
     // 在框架中投影点并检查其可见性
+    cout<< "--- mvpLocalMapPoints number: " <<mvpLocalMapPoints.size() <<endl;
     for(vector<MapPoint*>::iterator vit=mvpLocalMapPoints.begin(), vend=mvpLocalMapPoints.end(); vit!=vend; vit++)
     {
         MapPoint* pMP = *vit;
@@ -5204,18 +5204,18 @@ int Tracking::SearchLocalPointsByGF()
             th=5;
             nMatched = matcher.SearchByProjection(mCurrentFrame,mvpLocalMapPoints,th);
         }
-        else if (mFrameAfterInital <= camera_fps * 2 || nToMatch < 400) { // 800)
+        else if (mFrameAfterInital <= camera_fps * 5 || nToMatch < 400) { // 800)
             nMatched = matcher.SearchByProjection(mCurrentFrame,mvpLocalMapPoints,th);
         }
         else {
             // try computing Jacobian for each map point
             mObsHandler->mMapPoints = &mvpLocalMapPoints;
             mObsHandler->runMatrixBuilding(ORB_SLAM3::MAP_INFO_MATRIX, (time_total_match-time_Viz)/2, true, false);
-            
+            cout<< "--- runMatrixBuilding success ---"<<endl;
             double time_Mat_Online = timer.toc();
-            // logCurrentFrame.time_mat_online = time_Mat_Online;
             nMatched = mObsHandler->runActiveMapMatching(&mCurrentFrame, ORB_SLAM3::FRAME_INFO_MATRIX, mCurrentInfoMat,
                                                          th,matcher,num_to_match,time_total_match-time_Mat_Online-time_Viz);
+            cout<< "--- runActiveMapMatching success ---"<<endl;
         }
         double time_Match = timer.toc();
     }
@@ -5224,5 +5224,328 @@ int Tracking::SearchLocalPointsByGF()
     return nAlreadyMatched + nMatched;
 }
 
+// 
+void Tracking::UpdateLocalPointsByHashing(eLocalMapSet eLocalMap)
+{
+    cout<< "--- begin update local points by hashing ---" << mvpLocalMapPoints.size() <<endl;
+    //#ifdef TIMECOST_VERBOSE
+    arma::wall_clock timer/*, timer1*/;
+    double t;
+    //#endif
+    mbMapHashOTS = false;
+
+    timer.tic();
+
+    if (eLocalMap == eLocalMapSet::CovisOnly || eLocalMap == eLocalMapSet::Combined) {
+        // grab the local map from co-visibility
+        cout<< "--- co-visibility ---" <<endl;
+        mvpLocalMapPoints.clear();
+
+        for(vector<KeyFrame*>::iterator itKF=mvpLocalKeyFrames.begin(), itEndKF=mvpLocalKeyFrames.end(); itKF!=itEndKF; itKF++)
+        {
+            KeyFrame* pKF = *itKF;
+            vector<MapPoint*> vpMPs = pKF->GetMapPointMatches();
+
+            for(vector<MapPoint*>::iterator itMP=vpMPs.begin(), itEndMP=vpMPs.end(); itMP!=itEndMP; itMP++)
+            {
+                MapPoint* pMP = *itMP;
+                if(!pMP)        // already matched or outliers
+                    continue;
+                if(pMP->mnIdCoVisible == mCurrentFrame.mnId)   // check if selected yet (avoid pushing back same MapPoints multiple times)
+                    continue;
+                if(!pMP->isBad())
+                {
+                    mvpLocalMapPoints.push_back(pMP);
+                    pMP->mnIdCoVisible = mCurrentFrame.mnId;
+                    //                    pMP->mnTrackReferenceForFrame=mCurrentFrame.mnId;
+
+                    //                    // flow from co-visibility => maphash
+                    //                    timer1.tic();
+                    //                    mpHashMethod->insert(pMP);
+                    //                    t += timer1.toc();
+                }
+            }
+        }
+        cout<< "--- begin store local map points by covis ---" <<endl;
+        StoreLocalMapPointsByCoVis(mvpLocalMapPoints);
+        cout<< "--- store local map points by covis success ---" << mvpLocalMapPoints.size() <<endl;
+        if (mvpLocalMapPoints.size() < 2000) {
+            // update flag for final local map
+            for(vector<MapPoint*>::iterator itMP=mvpLocalMapPoints.begin(), itEndMP=mvpLocalMapPoints.end(); itMP!=itEndMP; itMP++)
+            {
+                MapPoint* pMP = *itMP;
+                if(!pMP || pMP->isBad())    // not matched yet
+                    continue;
+                if(pMP->mnTrackReferenceForFrame != mCurrentFrame.mnId)   //
+                    pMP->mnTrackReferenceForFrame = mCurrentFrame.mnId;
+
+                //
+                //                pMP->matchedByTrackLocalMap = false;
+            }
+            //            std::cout << "func UpdateReferencePointsByHashing: size of co-vis map = " << mvpLocalMapPoints.size() << std::endl;
+            return;
+        }
+    }
+
+    //    cerr<<"Time cost:"<<timer.toc()<<", ---------------------------------"<<endl;
+    cout<< "--- begin HashOnly ---" <<endl;
+    if (eLocalMap == eLocalMapSet::HashOnly || eLocalMap == eLocalMapSet::Combined) {
+        mbMapHashTriggered = true;
+        //
+        // grab the local map from map hash
+        cv::Mat mDescriptors = mCurrentFrame.mDescriptors;
+        //    std::vector<MapPoint*> vpMP = mCurrentFrame.mvpMapPoints;
+        std::vector<unsigned int> vKPU; // keypoint indices which need to be matched to LocalMapPoints
+
+        //#ifdef TIMECOST_VERBOSE
+        // timer.tic();
+        //#endif
+
+        Frame::GetUnMatchedKPbyBucketing(&mCurrentFrame, vKPU);
+
+        //    bool hit[pMIH->getHashTableSize()][pMIH->getBucketNum()] = {0}; // only works for false initialization
+        //    std::vector<std::vector<size_t> > hitid;
+        //    hitid.clear();
+
+        mvpLeftMapPointsByHashing.clear();
+        mvpMapPointsByHashing.clear();
+
+        //        std::cout << "before iterating vKPU" << std::endl;
+        t = 0.;
+        for(auto i:vKPU) {
+            //
+            unsigned int* pDesc = mDescriptors.ptr<unsigned int>(i);
+            std::vector<MapPoint*> candidates;
+            std::vector<MapPoint*> additional_candidates;
+
+            //            std::cout << "before query vKPU" << std::endl;
+
+            timer.tic();
+            mpHashMethod->query(pDesc, candidates, additional_candidates, mvpQueriedFeatures);
+            mvpLeftMapPointsByHashing.insert(mvpLeftMapPointsByHashing.end(), additional_candidates.begin(), additional_candidates.end());
+            // retrieve up to NUM_CANDIDATE_FEATURES x NUM_ACTIVE_HASHTABLES candidates
+
+            t += timer.toc();
+
+            for(vector<MapPoint*>::iterator itMP=candidates.begin(), itEndMP=candidates.end(); itMP!=itEndMP; itMP++)
+            {
+                MapPoint* pMP = *itMP;
+                if(!pMP)
+                    continue;
+                if(pMP->mnIdMapHashed==mCurrentFrame.mnId)
+                    continue;
+                if(!pMP->isBad())
+                {
+                    mvpMapPointsByHashing.push_back(pMP);
+                    pMP->mnIdMapHashed = mCurrentFrame.mnId;
+                }
+            }
+        }
+
+        //        std::cout << "done iterating vKPU" << std::endl;
+        //        std::sort(mvpHashMapPoints.begin(), mvpHashMapPoints.end(), sortMapPoint_ascend);
+    }
+
+    if (eLocalMap == eLocalMapSet::Combined) {
+        // set operation of both local maps
+        //
+        vector<MapPoint *> mvpInterMapPoints;
+        for(vector<MapPoint*>::iterator itMP=mvpLocalMapPoints.begin(), itEndMP=mvpLocalMapPoints.end(); itMP!=itEndMP; itMP++)
+        {
+            MapPoint* pMP = *itMP;
+            if(!pMP || pMP->isBad())    // not matched yet
+                continue;
+            if(pMP->mnIdMapHashed == mCurrentFrame.mnId) {
+                mvpInterMapPoints.push_back(pMP);
+            }
+            else {
+                mvpLeftMapPointsByHashing.push_back(pMP);
+            }
+        }
+
+        // copy from the intersected result
+        mvpLocalMapPoints.clear();
+        mvpLocalMapPoints.swap(mvpInterMapPoints);
+    }
+    else {
+
+        if (eLocalMap == eLocalMapSet::HashOnly) {
+            // simply copy from hashed result
+            mvpLocalMapPoints.clear();
+            mvpLocalMapPoints.swap(mvpMapPointsByHashing);
+        }
+    }
+
+    // update flag for final local map
+    for(vector<MapPoint*>::iterator itMP=mvpLocalMapPoints.begin(), itEndMP=mvpLocalMapPoints.end(); itMP!=itEndMP; itMP++)
+    {
+        MapPoint* pMP = *itMP;
+        if(!pMP || pMP->isBad())    // not matched yet
+            continue;
+        if(pMP->mnTrackReferenceForFrame != mCurrentFrame.mnId)
+            pMP->mnTrackReferenceForFrame = mCurrentFrame.mnId;
+
+        //        pMP->matchedByTrackLocalMap = false;
+    }
+}
+
+void Tracking::UpdateLocalPointsByGF()
+{
+    cout<< "--- UpdateLocalPoints mvpLocalMapPoints number: " << mvpLocalMapPoints.size() <<endl;
+    mvpLocalMapPoints.clear();
+
+    unsigned long minFrameId = mCurrentFrame.mnId; // - 2; // - 1; //
+    if (mbTrackLossAlert == 2)
+        minFrameId = 0;
+
+    for(vector<KeyFrame*>::const_iterator itKF=mvpLocalKeyFrames.begin(), itEndKF=mvpLocalKeyFrames.end(); itKF!=itEndKF; itKF++)
+    {
+        KeyFrame* pKF = *itKF;
+        const vector<MapPoint*> vpMPs = pKF->GetMapPointMatches();
+
+        for(vector<MapPoint*>::const_iterator itMP=vpMPs.begin(), itEndMP=vpMPs.end(); itMP!=itEndMP; itMP++)
+        {
+            MapPoint* pMP = *itMP;
+            if(!pMP)
+                continue;
+            if(pMP->mnTrackReferenceForFrame==mCurrentFrame.mnId)
+                continue;
+            if(!pMP->isBad())
+            {
+                //                if (pMP->goodAtFrameId > 0 || mvpLocalMapPoints.size() < 2000) {
+                //                    acceptMapPoint = true;
+                //                }
+                if (pMP->goodAtFrameId >= minFrameId)
+                {
+                    mvpLocalMapPoints.push_back(pMP);
+                    pMP->mnTrackReferenceForFrame = mCurrentFrame.mnId;
+                }
+                else
+                {
+                    // for those unselected map points, we still keep them and try matching them after current pose being published
+                    // mvpLocalAdditionalPoints.push_back(pMP);
+                    pMP->mnTrackReferenceForFrame = mCurrentFrame.mnId;
+                }
+
+            }
+        }
+    }
+}
+
+void Tracking::UpdateLocalKeyFramesByGF()
+{
+    // Each map point vote for the keyframes in which it has been observed
+    map<KeyFrame*,int> keyframeCounter;
+    for(int i=0; i<mCurrentFrame.N; i++)
+    {
+        if(mCurrentFrame.mvpMapPoints[i])
+        {
+            MapPoint* pMP = mCurrentFrame.mvpMapPoints[i];
+            if(!pMP->isBad())
+            {
+                const map<KeyFrame*, std::tuple<int, int>> observations = pMP->GetObservations();
+                for(map<KeyFrame*, std::tuple<int, int>>::const_iterator it=observations.begin(), itend=observations.end(); it!=itend; it++)
+                    keyframeCounter[it->first]++;
+            }
+            else
+            {
+                mCurrentFrame.mvpMapPoints[i]=NULL;
+            }
+        }
+    }
+
+    if(keyframeCounter.empty()) {
+        cout << "keyframeCounter is empty!" << endl;
+        return;
+    }
+
+    int max=0;
+    KeyFrame* pKFmax= static_cast<KeyFrame*>(NULL);
+
+    mvpLocalKeyFrames.clear();
+    mvpLocalKeyFrames.reserve(3*keyframeCounter.size());
+
+    // All keyframes that observe a map point are included in the local map. Also check which keyframe shares most points
+    for(map<KeyFrame*,int>::const_iterator it=keyframeCounter.begin(), itEnd=keyframeCounter.end(); it!=itEnd; it++)
+    {
+        KeyFrame* pKF = it->first;
+
+        if(pKF->isBad())
+            continue;
+
+        if(it->second>max)
+        {
+            max=it->second;
+            pKFmax=pKF;
+        }
+
+        mvpLocalKeyFrames.push_back(it->first);
+        pKF->mnTrackReferenceForFrame = mCurrentFrame.mnId;
+    }
+
+
+    // Include also some not-already-included keyframes that are neighbors to already-included keyframes
+    for(vector<KeyFrame*>::const_iterator itKF=mvpLocalKeyFrames.begin(), itEndKF=mvpLocalKeyFrames.end(); itKF!=itEndKF; itKF++)
+    {
+        // Limit the number of keyframes
+        if(mvpLocalKeyFrames.size()>80)
+            break;
+
+        KeyFrame* pKF = *itKF;
+
+        const vector<KeyFrame*> vNeighs = pKF->GetBestCovisibilityKeyFrames(10);
+
+        for(vector<KeyFrame*>::const_iterator itNeighKF=vNeighs.begin(), itEndNeighKF=vNeighs.end(); itNeighKF!=itEndNeighKF; itNeighKF++)
+        {
+            KeyFrame* pNeighKF = *itNeighKF;
+            if(!pNeighKF->isBad())
+            {
+                if(pNeighKF->mnTrackReferenceForFrame!=mCurrentFrame.mnId)
+                {
+                    mvpLocalKeyFrames.push_back(pNeighKF);
+                    pNeighKF->mnTrackReferenceForFrame=mCurrentFrame.mnId;
+                    break;
+                }
+            }
+        }
+
+        const set<KeyFrame*> spChilds = pKF->GetChilds();
+        for(set<KeyFrame*>::const_iterator sit=spChilds.begin(), send=spChilds.end(); sit!=send; sit++)
+        {
+            KeyFrame* pChildKF = *sit;
+            if(!pChildKF->isBad())
+            {
+                if(pChildKF->mnTrackReferenceForFrame!=mCurrentFrame.mnId)
+                {
+                    mvpLocalKeyFrames.push_back(pChildKF);
+                    pChildKF->mnTrackReferenceForFrame=mCurrentFrame.mnId;
+                    break;
+                }
+            }
+        }
+
+        KeyFrame* pParent = pKF->GetParent();
+        if(pParent)
+        {
+            //            std::cout << pParent << std::endl;
+            //            std::cout << pParent->mnTrackReferenceForFrame << std::endl;
+            //            std::cout << mCurrentFrame.mnId << std::endl;
+
+            if(pParent->mnTrackReferenceForFrame!=mCurrentFrame.mnId)
+            {
+                mvpLocalKeyFrames.push_back(pParent);
+                pParent->mnTrackReferenceForFrame=mCurrentFrame.mnId;
+                break;
+            }
+        }
+
+    }
+
+    if(pKFmax)
+    {
+        mpReferenceKF = pKFmax;
+        mCurrentFrame.mpReferenceKF = mpReferenceKF;
+    }
+}
 
 } //namespace ORB_SLAM

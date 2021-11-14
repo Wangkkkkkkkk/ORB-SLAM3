@@ -947,7 +947,9 @@ int Observability::runActiveMapMatching(Frame *pFrame,
             }
 
             // else, the queried map point is updated in time, and being assessed with potential info gain
+            cout<< "--- begin compute logdet ---" <<endl;
             double curDet = logDet( curMat + mMapPoints->at(queIdx)->ObsMat );
+            cout<< "--- success ---"<<endl;
 #ifdef INFORMATION_EFFICIENCY_SCORE
             heapSubset.push(SimplePoint(queIdx, curDet / double(curCost + mMapPoints->at(queIdx)->mvMatchCandidates.size())));
 #else

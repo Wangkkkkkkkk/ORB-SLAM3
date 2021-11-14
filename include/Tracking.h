@@ -118,6 +118,12 @@ public:
         OK_KLT=5                        //未使用
     };
 
+    enum eLocalMapSet{
+        CovisOnly = 1,
+        HashOnly  = 2,
+        Combined  = 3
+    };
+
     eTrackingState mState;
     eTrackingState mLastProcessedState;
 
@@ -171,6 +177,8 @@ public:
     size_t mFrameAfterInital;       // 初始化后的帧计数器
     double camera_fps;              // 相机帧率
     size_t num_good_constr_predef;  // 局部地图跟踪需要的特征点数
+    std::vector<MapPoint*> mvpLocalMapPointsByCoVis;
+    size_t mbTrackLossAlert;
 
 #ifdef REGISTER_TIMES
     void LocalMapStats2File();
@@ -238,7 +246,39 @@ protected:
     bool TrackLocalMapByGF();
     void UpdateLocalMapByGF();
     int SearchLocalPointsByGF();
+    void UpdateLocalPointsByGF();
+    void UpdateLocalKeyFramesByGF();
 
+
+    inline void StoreLocalMapPointsByCoVis(const std::vector<MapPoint *> &LocalMapPoints)
+    {
+        mvpLocalMapPointsByCoVis.clear();
+        mvpLocalMapPointsByCoVis = LocalMapPoints;
+    }
+
+    inline void RestoreLocalMapPoints(std::vector<MapPoint *> &LocalMapPoints)
+    {
+        //    LocalMapPoints = mvpLocalMapPointsBackup;
+        mvpLocalMapPointsByCoVis.swap(LocalMapPoints);
+    }
+
+    inline bool BackupLocalMapPointsEmpty()
+    {
+        return (mvpLocalMapPointsByCoVis.size()==0);
+    }
+    
+    void UpdateLocalPointsByHashing(eLocalMapSet eLocalMap);
+
+    bool UpdateQueryNumByHashTable(const double time_limit);
+
+    bool mbMapHashOTS;
+    bool mbMapHashTriggered;
+
+    std::vector<MapPoint*> mvpLeftMapPointsByHashing;
+    std::vector<MapPoint*> mvpMapPointsByHashing;
+    std::vector<int> mvpQueriedFeatures;
+
+    HASHING::MultiIndexHashing* mpHashMethod;
 
     bool mbMapUpdated;
 

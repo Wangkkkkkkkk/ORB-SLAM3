@@ -45,6 +45,22 @@ class ConstraintPoseImu;
 class GeometricCamera;
 class ORBextractor;
 
+/* --- options of query descriptor sampling --- */
+#define BUCKET_WIDTH                	50
+#define BUCKET_HEIGHT               	50
+#define BUCKET_MIN_FEATURES_PER_GRID    1
+
+struct Grid
+{
+    Grid()
+    {
+        matched_size = 0;
+        kp_unmatched_indices.clear();
+    }
+    unsigned int matched_size;
+    std::vector<unsigned int> kp_unmatched_indices;
+};
+
 class Frame
 {
 public:
@@ -179,7 +195,7 @@ public:
 
     int ComputeStereoMatches_Undistorted(bool isOnline = false);
 
-
+    static void GetUnMatchedKPbyBucketing(const Frame *pFrame, std::vector<unsigned int> &vUnMatchedKeyPoints);
 
     cv::Mat mRwc;
     cv::Mat mOw;

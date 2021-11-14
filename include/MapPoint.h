@@ -161,6 +161,17 @@ public:
     long unsigned int goodAtFrameId;
     long unsigned int mnUsedForLocalMap;
 
+    long unsigned int mnIdCoVisible;
+    long unsigned int mnIdMapHashed;
+    long unsigned int mnIdSelected;
+    long unsigned int mnIdRelocalized;
+    long unsigned int mnIdLoopClosure;
+    std::vector<bool> mvbActiveHashTables;
+    std::vector<bool> mvbHashed;
+
+    int mnIdCandidates;
+    int mnQueriedScore;
+
     // Tracking counters
      int mnVisible;
      int mnFound;
