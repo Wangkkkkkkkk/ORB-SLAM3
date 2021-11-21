@@ -114,7 +114,7 @@ Tracking::Tracking(System *pSys, ORBVocabulary* pVoc, FrameDrawer *pFrameDrawer,
     mCurrentInfoMat.zeros();
 
     mFrameAfterInital = 0;
-    camera_fps = 30;
+    camera_fps = 20;
 
     float fx = fSettings["Camera.fx"];
     float fy = fSettings["Camera.fy"];
@@ -1428,7 +1428,7 @@ cv::Mat Tracking::GrabImageMonocular(const cv::Mat &im, const double &timestamp,
         if(mState==NOT_INITIALIZED || mState==NO_IMAGES_YET ||(lastID - initID) < mMaxFrames)
             mCurrentFrame = Frame(mImGray,timestamp,mpIniORBextractor,mpORBVocabulary,mpCamera,mDistCoef,mbf,mThDepth);
         else
-            mCurrentFrame = Frame(mImGray,timestamp,mpORBextractorLeft,mpORBVocabulary,mpCamera,mDistCoef,mbf,mThDepth);
+            mCurrentFrame = Frame(mImGray,timestamp,mpORBextractorLeft,mpORBVocabulary,mpCamera,mDistCoef,mbf,mThDepth, &mLastFrame);
     }
     else if(mSensor == System::IMU_MONOCULAR)
     {
@@ -1974,6 +1974,7 @@ void Tracking::Track()
         // Initial camera pose estimation using motion model or relocalization (if tracking is lost)
         // mbOnlyTracking等于false表示正常SLAM模式（定位+地图更新），mbOnlyTracking等于true表示仅定位模式
         // tracking 类构造时默认为false。在viewer中有个开关ActivateLocalizationMode，可以控制是否开启mbOnlyTracking
+
         if(!mbOnlyTracking)
         {
 
@@ -3940,7 +3941,6 @@ void Tracking::UpdateLocalPoints()
 {
     // Step 1：清空局部地图点
     mvpLocalMapPoints.clear();
-
     int count_pts = 0;
 	// Step 2：遍历局部关键帧 mvpLocalKeyFrames
     for(vector<KeyFrame*>::const_reverse_iterator itKF=mvpLocalKeyFrames.rbegin(), itEndKF=mvpLocalKeyFrames.rend(); itKF!=itEndKF; ++itKF)
@@ -3951,7 +3951,6 @@ void Tracking::UpdateLocalPoints()
         // step 2：将局部关键帧的地图点添加到mvpLocalMapPoints
         for(vector<MapPoint*>::const_iterator itMP=vpMPs.begin(), itEndMP=vpMPs.end(); itMP!=itEndMP; itMP++)
         {
-
             MapPoint* pMP = *itMP;
             if(!pMP)
                 continue;
@@ -4998,6 +4997,12 @@ bool Tracking::TrackLocalMapByGF()
 
     timer.tic();
     // Update MapPoints Statistics
+    mCurrentFrame.mvGFpoints.clear();
+    const cv::Mat Rcw = mCurrentFrame.mTcw.rowRange(0,3).colRange(0,3);
+    const cv::Mat tcw = mCurrentFrame.mTcw.rowRange(0,3).col(3);
+    const cv::Mat Ow = - Rcw.t() * tcw;
+    cv::Mat x3Dw, x3Dc;
+    cv::Point2f uv;
     for(int i=0; i<mCurrentFrame.N; i++)
     {
         if(mCurrentFrame.mvpMapPoints[i])
@@ -5008,6 +5013,11 @@ bool Tracking::TrackLocalMapByGF()
                 if(!mbOnlyTracking)
                 {
                     if(mCurrentFrame.mvpMapPoints[i]->Observations()>0)
+                        // 提前将优特征点投影到预测下一帧的图像上，位姿采用当前帧位姿
+                        x3Dw = mCurrentFrame.mvpMapPoints[i]->GetWorldPos();
+                        x3Dc = Rcw * x3Dw + tcw;
+                        uv = mCurrentFrame.mpCamera->project(x3Dc);
+                        mCurrentFrame.mvGFpoints.push_back(uv);
                         mnMatchesInliers++;
                 }
                 else
@@ -5080,7 +5090,7 @@ int Tracking::SearchLocalPointsByGF()
 
     mCurrentInfoMat = arma::eye( size(mCurrentInfoMat) ) * 0.00001;
 
-    if (mFrameAfterInital > camera_fps * 5 && mCurrentFrame.mnId >= mnLastRelocFrameId+2) {
+    if (mFrameAfterInital > camera_fps * 3 && mCurrentFrame.mnId >= mnLastRelocFrameId+2) {
         //    cout << "update pose info in obs class" << endl;
         // NOTE
         // there is no need to do motion prediction again, since it's already be
@@ -5130,12 +5140,10 @@ int Tracking::SearchLocalPointsByGF()
     }
 
     int nToMatch=0;
-    cout<< "--- nalreadymatched number = " << nAlreadyMatched <<endl;
     mObsHandler->mLeftMapPoints.clear();
     mObsHandler->mbNeedVizCheck = false;
     double time_total_match = 0.015; // 1.0; 
     int num_to_match = this->num_good_constr_predef - nAlreadyMatched; // 50;  //
-    cout<< "--- num to match : " << num_to_match <<endl;
     if (num_to_match <= 0) {
         // skip the rest
         for (size_t i=0; i<mvpLocalMapPoints.size(); ++i) {
@@ -5160,7 +5168,6 @@ int Tracking::SearchLocalPointsByGF()
 
     // Project points in frame and check its visibility
     // 在框架中投影点并检查其可见性
-    cout<< "--- mvpLocalMapPoints number: " <<mvpLocalMapPoints.size() <<endl;
     for(vector<MapPoint*>::iterator vit=mvpLocalMapPoints.begin(), vend=mvpLocalMapPoints.end(); vit!=vend; vit++)
     {
         MapPoint* pMP = *vit;
@@ -5188,7 +5195,6 @@ int Tracking::SearchLocalPointsByGF()
 
     // Here is the place to inject Obs computation; to reduce the load of computation, we might need to approximate exact point Obs with region;
     // Following are the time cost of each step in TrackLocalMap:
-    cout<< "--- ntomatch number = " << nToMatch <<endl;
     int nMatched = 0;
     if(nToMatch>0)
     {
@@ -5204,22 +5210,19 @@ int Tracking::SearchLocalPointsByGF()
             th=5;
             nMatched = matcher.SearchByProjection(mCurrentFrame,mvpLocalMapPoints,th);
         }
-        else if (mFrameAfterInital <= camera_fps * 5 || nToMatch < 400) { // 800)
+        else if (mFrameAfterInital <= camera_fps * 3 || nToMatch < 400) { // 800)
             nMatched = matcher.SearchByProjection(mCurrentFrame,mvpLocalMapPoints,th);
         }
         else {
             // try computing Jacobian for each map point
             mObsHandler->mMapPoints = &mvpLocalMapPoints;
             mObsHandler->runMatrixBuilding(ORB_SLAM3::MAP_INFO_MATRIX, (time_total_match-time_Viz)/2, true, false);
-            cout<< "--- runMatrixBuilding success ---"<<endl;
             double time_Mat_Online = timer.toc();
             nMatched = mObsHandler->runActiveMapMatching(&mCurrentFrame, ORB_SLAM3::FRAME_INFO_MATRIX, mCurrentInfoMat,
                                                          th,matcher,num_to_match,time_total_match-time_Mat_Online-time_Viz);
-            cout<< "--- runActiveMapMatching success ---"<<endl;
         }
         double time_Match = timer.toc();
     }
-    cout<< "--- nmatched number = " << nMatched <<endl;
 
     return nAlreadyMatched + nMatched;
 }
@@ -5227,7 +5230,6 @@ int Tracking::SearchLocalPointsByGF()
 // 
 void Tracking::UpdateLocalPointsByHashing(eLocalMapSet eLocalMap)
 {
-    cout<< "--- begin update local points by hashing ---" << mvpLocalMapPoints.size() <<endl;
     //#ifdef TIMECOST_VERBOSE
     arma::wall_clock timer/*, timer1*/;
     double t;
@@ -5238,7 +5240,6 @@ void Tracking::UpdateLocalPointsByHashing(eLocalMapSet eLocalMap)
 
     if (eLocalMap == eLocalMapSet::CovisOnly || eLocalMap == eLocalMapSet::Combined) {
         // grab the local map from co-visibility
-        cout<< "--- co-visibility ---" <<endl;
         mvpLocalMapPoints.clear();
 
         for(vector<KeyFrame*>::iterator itKF=mvpLocalKeyFrames.begin(), itEndKF=mvpLocalKeyFrames.end(); itKF!=itEndKF; itKF++)
@@ -5266,9 +5267,7 @@ void Tracking::UpdateLocalPointsByHashing(eLocalMapSet eLocalMap)
                 }
             }
         }
-        cout<< "--- begin store local map points by covis ---" <<endl;
         StoreLocalMapPointsByCoVis(mvpLocalMapPoints);
-        cout<< "--- store local map points by covis success ---" << mvpLocalMapPoints.size() <<endl;
         if (mvpLocalMapPoints.size() < 2000) {
             // update flag for final local map
             for(vector<MapPoint*>::iterator itMP=mvpLocalMapPoints.begin(), itEndMP=mvpLocalMapPoints.end(); itMP!=itEndMP; itMP++)
@@ -5288,7 +5287,6 @@ void Tracking::UpdateLocalPointsByHashing(eLocalMapSet eLocalMap)
     }
 
     //    cerr<<"Time cost:"<<timer.toc()<<", ---------------------------------"<<endl;
-    cout<< "--- begin HashOnly ---" <<endl;
     if (eLocalMap == eLocalMapSet::HashOnly || eLocalMap == eLocalMapSet::Combined) {
         mbMapHashTriggered = true;
         //
@@ -5391,7 +5389,6 @@ void Tracking::UpdateLocalPointsByHashing(eLocalMapSet eLocalMap)
 
 void Tracking::UpdateLocalPointsByGF()
 {
-    cout<< "--- UpdateLocalPoints mvpLocalMapPoints number: " << mvpLocalMapPoints.size() <<endl;
     mvpLocalMapPoints.clear();
 
     unsigned long minFrameId = mCurrentFrame.mnId; // - 2; // - 1; //

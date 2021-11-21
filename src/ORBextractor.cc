@@ -1532,14 +1532,22 @@ static void computeDescriptors(const Mat& image, vector<KeyPoint>& keypoints, Ma
  * @param[in & out] _descriptors              存储特征点描述子的矩阵
  */
     int ORBextractor::operator()( InputArray _image, InputArray _mask, vector<KeyPoint>& _keypoints,
-                                  OutputArray _descriptors, std::vector<int> &vLappingArea)
+                                  OutputArray _descriptors, std::vector<int> &vLappingArea, vector<cv::Point2f> GFpoints)
     {
 	// Step 1 检查图像有效性。如果图像为空，那么就直接返回
         if(_image.empty())
             return -1;
 
 	//获取图像的大小
+    cout<< "GF points number: " << GFpoints.size() <<endl;
     Mat image = _image.getMat();
+
+    // 根据投影点聚类特征提取网格
+    if (GFpoints.size() > 0) {
+        vector<vector<cv::Point2f> > mvExtrackArea;
+        mvExtrackArea = ClusteringGrid(image, GFpoints);
+    }
+
 	//判断图像的格式是否正确，要求是单通道灰度值
     assert(image.type() == CV_8UC1 );
 
@@ -1714,6 +1722,15 @@ static void computeDescriptors(const Mat& image, vector<KeyPoint>& keypoints, Ma
         }
     }
 
+    }
+
+    vector<vector<cv::Point2f> > ORBextractor::ClusteringGrid(Mat image, vector<cv::Point2f> GFpoints) {
+        vector<vector<cv::Point2f> > mvExtrackArea;
+        // cout<< "image : " << image <<endl;
+        cout<< "GF points : " << GFpoints[0] << ", " << GFpoints[2] <<endl;
+        // 构建二维直方图
+
+        // 构建窗口
     }
 
 } //namespace ORB_SLAM

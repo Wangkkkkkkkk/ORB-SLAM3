@@ -323,6 +323,9 @@ public:
 
     vector<pair<int, int> > mvDistIdx;
 
+    // 优特征点投影下一帧的投影点保存
+    vector<cv::Point2f> mvGFpoints;
+
 #ifdef REGISTER_TIMES
     double mTimeORB_Ext;
     double mTimeStereoMatch;

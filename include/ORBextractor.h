@@ -56,7 +56,8 @@ public:
     // Mask is ignored in the current implementation.
     int operator()( cv::InputArray _image, cv::InputArray _mask,
                     std::vector<cv::KeyPoint>& _keypoints,
-                    cv::OutputArray _descriptors, std::vector<int> &vLappingArea);
+                    cv::OutputArray _descriptors, std::vector<int> &vLappingArea,
+                    std::vector<cv::Point2f> GFpoints = std::vector<cv::Point2f>(0));
 
     int inline GetLevels(){
         return nlevels;}
@@ -90,6 +91,8 @@ protected:
                                            const int &maxX, const int &minY, const int &maxY, const int &nFeatures, const int &level);
 
     void ComputeKeyPointsOld(std::vector<std::vector<cv::KeyPoint> >& allKeypoints);
+    std::vector<std::vector<cv::Point2f> > ClusteringGrid(cv::Mat image, std::vector<cv::Point2f> GFpoints);
+    
     std::vector<cv::Point> pattern;
 
     int nfeatures;

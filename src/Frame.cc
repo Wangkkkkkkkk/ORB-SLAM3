@@ -74,7 +74,7 @@ Frame::Frame(const Frame &frame)
      monoLeft(frame.monoLeft), monoRight(frame.monoRight), mvLeftToRightMatch(frame.mvLeftToRightMatch),
      mvRightToLeftMatch(frame.mvRightToLeftMatch), mvStereo3Dpoints(frame.mvStereo3Dpoints),
      mTlr(frame.mTlr.clone()), mRlr(frame.mRlr.clone()), mtlr(frame.mtlr.clone()), mTrl(frame.mTrl.clone()),
-     mTrlx(frame.mTrlx), mTlrx(frame.mTlrx), mOwx(frame.mOwx), mRcwx(frame.mRcwx), mtcwx(frame.mtcwx)
+     mTrlx(frame.mTrlx), mTlrx(frame.mTlrx), mOwx(frame.mOwx), mRcwx(frame.mRcwx), mtcwx(frame.mtcwx), mvGFpoints(frame.mvGFpoints)
 {
     for(int i=0;i<FRAME_GRID_COLS;i++)
         for(int j=0; j<FRAME_GRID_ROWS; j++){
@@ -497,10 +497,20 @@ void Frame::ExtractORB(int flag, const cv::Mat &im, const int x0, const int x1)
 	// 判断是左图还是右图
     if(flag==0)
 		// 左图的话就套使用左图指定的特征点提取器，并将提取结果保存到对应的变量中 
-        monoLeft = (*mpORBextractorLeft)(im,cv::Mat(),mvKeys,mDescriptors,vLapping);
+        if (mpPrevFrame != NULL) {
+            monoLeft = (*mpORBextractorLeft)(im,cv::Mat(),mvKeys,mDescriptors,vLapping, mpPrevFrame->mvGFpoints);
+        }
+        else {
+            monoLeft = (*mpORBextractorLeft)(im,cv::Mat(),mvKeys,mDescriptors,vLapping);
+        }
     else
 		// 右图的话就需要使用右图指定的特征点提取器，并将提取结果保存到对应的变量中 
-        monoRight = (*mpORBextractorRight)(im,cv::Mat(),mvKeysRight,mDescriptorsRight,vLapping);
+        if (mpPrevFrame != NULL) {
+            monoRight = (*mpORBextractorRight)(im,cv::Mat(),mvKeysRight,mDescriptorsRight,vLapping, mpPrevFrame->mvGFpoints);
+        }
+        else {
+            monoRight = (*mpORBextractorRight)(im,cv::Mat(),mvKeysRight,mDescriptorsRight,vLapping);
+        }
 }
 
 void Frame::SetPose(cv::Mat Tcw)
@@ -1598,7 +1608,7 @@ int Frame::ComputeStereoMatches_Undistorted(bool isOnline)
 
     if (mvRowIndices.size() != nRows) {
         PrepareStereoCandidates();
-        std::cout << "redo the stereo candidate preparation!" << std::endl;
+        // std::cout << "redo the stereo candidate preparation!" << std::endl;
     }
 
     // Set limits for search
@@ -1871,6 +1881,8 @@ void Frame::GetUnMatchedKPbyBucketing(const Frame *pFrame, std::vector<unsigned 
     // free buckets
     delete []buckets;
 }
+
+
 
 
 } //namespace ORB_SLAM
