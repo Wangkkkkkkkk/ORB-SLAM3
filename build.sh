@@ -28,4 +28,4 @@ echo "Configuring and building ORB_SLAM3 ..."
 # mkdir build
 cd build
 cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=$(which g++) -DCMAKE_C_COMPILER=$(which gcc)
-make -j
+make -j4
