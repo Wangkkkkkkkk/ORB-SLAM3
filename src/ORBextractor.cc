@@ -1076,7 +1076,7 @@ void ORBextractor::ComputeKeyPointsOctTree(
         GFpoints.resize(sGFpoints[level].size());
         GFpoints.assign(sGFpoints[level].begin(), sGFpoints[level].end());
         int arr[nRows][nCols] = {0};
-        for (int i=0;i<GFpoints.size();i++) {
+        for (int i=0;i<GFpoints.size()-1;i++) {
             int _row = GFpoints[i].y;
             int _col = GFpoints[i].x;
             int n_x = int(_row / hCell);
@@ -1086,7 +1086,51 @@ void ORBextractor::ComputeKeyPointsOctTree(
             }
             arr[n_x][n_y]++;
         }
-
+        // 添加边缘
+        cv::Point2f t_uv = GFpoints[GFpoints.size()-1];
+        int col = 0;
+        int row = 0;
+        if (t_uv.x > 0) {
+            col = round(t_uv.x / 35);
+            if (col > 0) {
+                for (int c=0;c<col;c++) {
+                    for (int i=0;i<nRows;i++) {
+                        arr[i][nCols-c-1]++;
+                    }
+                }
+            }
+        }
+        else {
+            col = round(t_uv.x / 35);
+            if (col > 0) {
+                for (int c=0;c<col;c++) {
+                    for (int i=0;i<nRows;i++) {
+                        arr[i][c]++;
+                    }
+                }
+            }
+        }
+        if (t_uv.y > 0) {
+            row = round(t_uv.y / 35);
+            if (row > 0) {
+                for (int r=0;r<row;r++) {
+                    for (int i=0;i<nCols;i++) {
+                        arr[nRows-r-1][i]++;
+                    }
+                }
+            }
+        }
+        else {
+            row = round(t_uv.y / 35);
+            if (row > 0) {
+                for (int r=0;r<row;r++) {
+                    for (int i=0;i<nCols;i++) {
+                        arr[r][i]++;
+                    }
+                }
+            }
+        }
+        
         // cout<< "--- host: ---" <<endl;
         // for(int i=0;i<nRows;i++) {
         //     for(int j=0;j<nCols;j++) {
@@ -1128,7 +1172,7 @@ void ORBextractor::ComputeKeyPointsOctTree(
 				//判断坐标是否在图像中
 				//TODO 不太能够明白为什么要-6，前面不都是-3吗
 				//!BUG  正确应该是maxBorderX-3
-                if(iniX>=maxBorderX-6 || arr[i][j] == 0)
+                if(iniX>=maxBorderX-6 || (arr[i][j] == 0 && i != 0 && j!= 0 && i != nRows-1 && j != nCols-1))
                     continue;
 				//如果最大坐标越界那么委屈一下
                 if(maxX>maxBorderX)
@@ -1305,15 +1349,15 @@ void ORBextractor::ComputeKeyPointsOctTree(
                 //当图像cell中检测到FAST角点的时候执行下面的语句
                 if(!vKeysCell.empty())
                 {
-					//遍历其中的所有FAST角点
+                    //遍历其中的所有FAST角点
                     for(vector<cv::KeyPoint>::iterator vit=vKeysCell.begin(); vit!=vKeysCell.end();vit++)
                     {
-						//NOTICE 到目前为止，这些角点的坐标都是基于图像cell的，现在我们要先将其恢复到当前的【坐标边界】下的坐标
-						//这样做是因为在下面使用八叉树法整理特征点的时候将会使用得到这个坐标
-						//在后面将会被继续转换成为在当前图层的扩充图像坐标系下的坐标
+                        //NOTICE 到目前为止，这些角点的坐标都是基于图像cell的，现在我们要先将其恢复到当前的【坐标边界】下的坐标
+                        //这样做是因为在下面使用八叉树法整理特征点的时候将会使用得到这个坐标
+                        //在后面将会被继续转换成为在当前图层的扩充图像坐标系下的坐标
                         (*vit).pt.x+=j*wCell;
                         (*vit).pt.y+=i*hCell;
-						//然后将其加入到”等待被分配“的特征点容器中
+                        //然后将其加入到”等待被分配“的特征点容器中
                         vToDistributeKeys.push_back(*vit);
                     }//遍历图像cell中的所有的提取出来的FAST角点，并且恢复其在整个金字塔当前层图像下的坐标
                 }//当图像cell中检测到FAST角点的时候执行下面的语句
