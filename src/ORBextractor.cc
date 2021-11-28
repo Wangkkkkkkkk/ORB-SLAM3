@@ -1091,7 +1091,7 @@ void ORBextractor::ComputeKeyPointsOctTree(
         int col = 0;
         int row = 0;
         if (t_uv.x > 0) {
-            col = round(t_uv.x / 35);
+            col = ceil(t_uv.x / 35);
             if (col > 0) {
                 for (int c=0;c<col;c++) {
                     for (int i=0;i<nRows;i++) {
@@ -1101,7 +1101,7 @@ void ORBextractor::ComputeKeyPointsOctTree(
             }
         }
         else {
-            col = round(t_uv.x / 35);
+            col = ceil(-t_uv.x / 35);
             if (col > 0) {
                 for (int c=0;c<col;c++) {
                     for (int i=0;i<nRows;i++) {
@@ -1111,7 +1111,7 @@ void ORBextractor::ComputeKeyPointsOctTree(
             }
         }
         if (t_uv.y > 0) {
-            row = round(t_uv.y / 35);
+            row = ceil(t_uv.y / 35);
             if (row > 0) {
                 for (int r=0;r<row;r++) {
                     for (int i=0;i<nCols;i++) {
@@ -1121,7 +1121,7 @@ void ORBextractor::ComputeKeyPointsOctTree(
             }
         }
         else {
-            row = round(t_uv.y / 35);
+            row = ceil(-t_uv.y / 35);
             if (row > 0) {
                 for (int r=0;r<row;r++) {
                     for (int i=0;i<nCols;i++) {
@@ -1172,7 +1172,7 @@ void ORBextractor::ComputeKeyPointsOctTree(
 				//判断坐标是否在图像中
 				//TODO 不太能够明白为什么要-6，前面不都是-3吗
 				//!BUG  正确应该是maxBorderX-3
-                if(iniX>=maxBorderX-6 || (arr[i][j] == 0 && i != 0 && j!= 0 && i != nRows-1 && j != nCols-1))
+                if(iniX>=maxBorderX-6 || arr[i][j] == 0)
                     continue;
 				//如果最大坐标越界那么委屈一下
                 if(maxX>maxBorderX)
