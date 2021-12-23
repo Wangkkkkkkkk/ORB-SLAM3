@@ -910,6 +910,9 @@ void LocalMapping::CreateNewMapPoints()
             // c.该MapPoint的平均观测方向和深度范围
             pMP->UpdateNormalAndDepth();
 
+            // 地图点加入响应值信息
+            pMP->response = mpCurrentKeyFrame->mvKeys[idx1].response;
+
             mpAtlas->AddMapPoint(pMP);
             // Step 6.10：将新产生的点放入检测队列
             // 这些MapPoints都会经过MapPointCulling函数的检验

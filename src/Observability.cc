@@ -900,6 +900,7 @@ int Observability::runActiveMapMatching(Frame *pFrame,
     int nMatched = 0;
     //
     while (nMatched < num_to_match) {
+        // cout << "func matchMapPointActive: matching round " << nMatched << endl;
         //    for (size_t i=0; i<num_to_match; ++i) {
         //        int maxLmk = -1;
         //        double maxDet = -DBL_MAX;
@@ -948,6 +949,8 @@ int Observability::runActiveMapMatching(Frame *pFrame,
 
             // else, the queried map point is updated in time, and being assessed with potential info gain
             double curDet = logDet( curMat + mMapPoints->at(queIdx)->ObsMat );
+            double response = mMapPoints->at(queIdx)->response;
+            curDet += response;
 #ifdef INFORMATION_EFFICIENCY_SCORE
             heapSubset.push(SimplePoint(queIdx, curDet / double(curCost + mMapPoints->at(queIdx)->mvMatchCandidates.size())));
 #else
@@ -958,6 +961,7 @@ int Observability::runActiveMapMatching(Frame *pFrame,
                 // once filled the heap with random samples
                 // start matching the one with highest logdet / info gain
                 SimplePoint heapTop = heapSubset.top();
+                // cout<< "heapTop = " << heapTop.score <<endl;
 #ifdef OBS_DEBUG_VERBOSE
                 cout << "heapTop logDet = " << heapTop.score << endl;
 #endif

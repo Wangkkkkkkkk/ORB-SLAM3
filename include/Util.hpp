@@ -882,10 +882,15 @@ inline double logDet(arma::mat M) {
 #endif
 
     arma::mat R;
-    if (arma::chol(R, M, "lower") == true) {
+    if (arma::chol(R, M, "lower") == true) { // arma::chol layout = "lower": M = R * R.t()
         //        arma::vec dv = R.diag();
         //        double min_dv = arma::min(dv);
         //        return 2 * std::log( arma::prod( dv ) / min_dv );
+
+        // std::cout<< R <<std::endl;
+        // std::cout<< R.diag() <<std::endl;  // 提取矩阵 R 的对角线元素
+        // std::cout<< arma::prod(R.diag()) <<std::endl; // 默认返回矩阵的列元素乘积
+        // std::cout<< std::log(arma::prod(R.diag())) <<std::endl; // 以 e 为底，求指数  y = log(x); e^y = x;
         return 2 * std::log( arma::prod( R.diag() ) );
     }
     else {

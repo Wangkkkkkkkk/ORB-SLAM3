@@ -153,6 +153,8 @@ public:
     arma::vec ObsVector;
     double ObsScore;
     int ObsRank;
+    // 地图点响应值，最新
+    float response;
     //
     float u_proj, v_proj;
     //

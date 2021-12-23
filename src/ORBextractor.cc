@@ -57,6 +57,7 @@
 #include <opencv2/imgproc/imgproc.hpp>
 #include <vector>
 #include <iostream>
+#include <fstream>
 
 #include "ORBextractor.h"
 
@@ -1043,7 +1044,26 @@ void ORBextractor::ComputeKeyPointsOctTree(
     allKeypoints.resize(nlevels);
 
 	//图像cell的尺寸，是个正方形，可以理解为边长in像素坐标
-    const float W = 35;
+    cv::Point2f t_uv = sGFpoints[0][sGFpoints[0].size()-1];
+    int dis = int(sqrt(pow(t_uv.x, 2) + pow(t_uv.y, 2)));
+    float W = 20 + 2 * dis;
+    if (W > 80) {
+        W = 80;
+    }
+
+    // 获取特征点分布数据
+    // ofstream outfile("/home/kai/file/VO_SpeedUp/Dataset/feature_point/feature_points_xy.txt", ios::out | ios::app);
+    // if (!outfile.is_open()) {
+    //     cout<< "Can't Open!" <<endl;
+    //     exit(10);
+    // }
+    // for (int i=0;i<sGFpoints[0].size();i++) {
+    //     float x = sGFpoints[0][i].x;
+    //     float y = sGFpoints[0][i].y;
+    //     outfile << x << "," << y << "\n";
+    // }
+    // outfile<< "end\n";
+    // outfile.close();
 
     // 对每一层图像做处理
 	//遍历所有图像
@@ -1087,11 +1107,15 @@ void ORBextractor::ComputeKeyPointsOctTree(
             arr[n_x][n_y]++;
         }
         // 添加边缘
-        cv::Point2f t_uv = GFpoints[GFpoints.size()-1];
         int col = 0;
         int row = 0;
+        bool isBigMove = false;
         if (t_uv.x > 0) {
             col = ceil(t_uv.x / 35);
+            if (col > 1) {
+                // cout<< "move more big!!!" <<endl;
+                isBigMove = true;
+            }
             if (col > 0) {
                 for (int c=0;c<col;c++) {
                     for (int i=0;i<nRows;i++) {
@@ -1102,6 +1126,10 @@ void ORBextractor::ComputeKeyPointsOctTree(
         }
         else {
             col = ceil(-t_uv.x / 35);
+            if (col > 1) {
+                // cout<< "move more big!!!" <<endl;
+                isBigMove = true;
+            }
             if (col > 0) {
                 for (int c=0;c<col;c++) {
                     for (int i=0;i<nRows;i++) {
@@ -1112,6 +1140,10 @@ void ORBextractor::ComputeKeyPointsOctTree(
         }
         if (t_uv.y > 0) {
             row = ceil(t_uv.y / 35);
+            if (row > 1) {
+                // cout<< "move more big!!!" <<endl;
+                isBigMove = true;
+            }
             if (row > 0) {
                 for (int r=0;r<row;r++) {
                     for (int i=0;i<nCols;i++) {
@@ -1122,6 +1154,10 @@ void ORBextractor::ComputeKeyPointsOctTree(
         }
         else {
             row = ceil(-t_uv.y / 35);
+            isBigMove = true;
+            if (row > 1) {
+                // cout<< "move more big!!!" <<endl;
+            }
             if (row > 0) {
                 for (int r=0;r<row;r++) {
                     for (int i=0;i<nCols;i++) {
@@ -1130,19 +1166,60 @@ void ORBextractor::ComputeKeyPointsOctTree(
                 }
             }
         }
-        
-        // cout<< "--- host: ---" <<endl;
-        // for(int i=0;i<nRows;i++) {
-        //     for(int j=0;j<nCols;j++) {
-        //         if (arr[i][j] == 0) {
-        //             cout<< "0 ";
+        int nEar = 0;
+        if (level == 0) {
+            // cout<< "--- host: ---" <<endl;
+            // for(int i=0;i<nRows;i++) {
+            //     for(int j=0;j<nCols;j++) {
+            //         if (arr[i][j] == 0) {
+            //             cout<< "0 ";
+            //         }
+            //         else {
+            //             cout<<"1 ";
+            //         }
+            //     }
+            //     cout<<endl;
+            // }
+            for (int r=0;r<nRows;r++) {
+                for (int i=0;i<nCols;i++) {
+                    if (arr[r][i] > 0) {
+                        nEar++;
+                    }
+                }
+            }
+            float density = float(nEar) / (nRows * nCols);
+            mnFeaturesPerLevel.clear();
+            mnFeaturesPerLevel.resize(nlevels);
+            nfeatures = 300 + density * nfeatures;
+            // cout<< "nEar = " << nEar << " nRows = " << nRows << " nCols = " << nCols <<endl;
+            // cout<< "density = " << density <<endl;
+            // cout<< "nfeatures = " << nfeatures <<endl;
+            float factor = 1.0f / scaleFactor;
+            float nDesiredFeaturesPerScale = nfeatures*(1 - factor)/(1 - (float)pow((double)factor, (double)nlevels));
+            int sumFeatures = 0;
+            for( int level = 0; level < nlevels-1; level++ )
+            {
+                mnFeaturesPerLevel[level] = cvRound(nDesiredFeaturesPerScale);
+                sumFeatures += mnFeaturesPerLevel[level];
+                nDesiredFeaturesPerScale *= factor;
+            }
+            mnFeaturesPerLevel[nlevels-1] = std::max(nfeatures - sumFeatures, 0);
+        }
+        // if (isBigMove == true) {
+        //     cout<< "--- host: ---" <<endl;
+        //     for(int i=0;i<nRows;i++) {
+        //         for(int j=0;j<nCols;j++) {
+        //             if (arr[i][j] == 0) {
+        //                 cout<< "0 ";
+        //             }
+        //             else {
+        //                 cout<<"1 ";
+        //             }
         //         }
-        //         else {
-        //             cout<<"1 ";
-        //         }
+        //         cout<<endl;
         //     }
-        //     cout<<endl;
         // }
+        
 
 		//开始遍历图像网格，还是以行开始遍历的
         for(int i=0; i<nRows; i++)
@@ -2021,33 +2098,6 @@ static void computeDescriptors(const Mat& image, vector<KeyPoint>& keypoints, Ma
                             BORDER_REFLECT_101);            
             }
         }
-    }
-
-    vector<vector<cv::Point2f> > ORBextractor::ClusteringGrid(Mat image, vector<cv::Point2f> GFpoints) {
-        vector<vector<cv::Point2f> > mvExtrackArea;
-        // image rows = 480, cols = 752;
-
-        // 构建二维直方图
-        // int rows = 480;
-        // int cols = 752;
-        // int n_r = rows / 35;
-        // int n_c = cols / 35;
-        // int cell_r = rows / n_r;
-        // int cell_c = cols / n_c;
-        // vector<int> hist_r;
-        // vector<int> hist_c;
-        // hist_r.assign(n_r, 0);
-        // hist_c.assign(n_c, 0);
-        // for (int i=0;i<GFpoints.size();i++) {
-        //     int _row = GFpoints[i].y;
-        //     int _col = GFpoints[i].x;
-        //     int n_x = int(_row / cell_r);
-        //     int n_y = int(_col / cell_c);
-        //     hist_r[n_x]++;
-        //     hist_c[n_y]++;
-        // }
-        
-        // 构建窗口
     }
 
 } //namespace ORB_SLAM

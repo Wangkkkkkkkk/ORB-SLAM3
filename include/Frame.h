@@ -103,7 +103,7 @@ public:
         return mOw.clone();
     }
 
-    // Returns inverse of rotation
+    // Returns inverse of rotation 返回旋转矩阵的逆
     inline cv::Mat GetRotationInverse(){
         return mRwc.clone();
     }
