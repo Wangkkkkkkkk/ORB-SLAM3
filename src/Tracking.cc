@@ -5011,10 +5011,18 @@ bool Tracking::TrackLocalMapByGF()
     const cv::Mat Rcw = mCurrentFrame.mTcw.rowRange(0,3).colRange(0,3);
     const cv::Mat tcw = mCurrentFrame.mTcw.rowRange(0,3).col(3);
 
+    cv::Mat LastTwc = cv::Mat::eye(4,4,CV_32F);
+    mLastFrame.GetRotationInverse().copyTo(LastTwc.rowRange(0,3).colRange(0,3));
+    mLastFrame.GetCameraCenter().copyTo(LastTwc.rowRange(0,3).col(3));
+    cv::Mat mVelocitys = mCurrentFrame.mTcw * LastTwc;
+    cv::Mat mTcw_last = mVelocitys * mCurrentFrame.mTcw;
+    cv::Mat Rcw_last = mTcw_last.rowRange(0,3).colRange(0,3);
+    cv::Mat tcw_last = mTcw_last.rowRange(0,3).col(3);
+
     cv::Mat x3Dw, x3Dc;
     cv::Point2f uv;
     cv::Point2f t_uv;
-    bool flag = false;
+    int GFpoint_number = 0;
     for(int i=0; i<mCurrentFrame.N; i++)
     {
         if(mCurrentFrame.mvpMapPoints[i])
@@ -5025,28 +5033,19 @@ bool Tracking::TrackLocalMapByGF()
                 if(!mbOnlyTracking)
                 {
                     if(mCurrentFrame.mvpMapPoints[i]->Observations()>0)
-                        // 提前将优特征点投影到预测下一帧的图像上，位姿采用当前帧位姿
+                        // 提前将优特征点投影到预测下一帧的图像上，下一帧位姿采用恒速模型
                         x3Dw = mCurrentFrame.mvpMapPoints[i]->GetWorldPos();
                         x3Dc = Rcw * x3Dw + tcw;
                         uv = mCurrentFrame.mpCamera->project(x3Dc);
-                        mCurrentFrame.mvGFpoints.push_back(uv);
-
-                        // 预测像素移动
-                        if (flag == false) {
-                            cv::Mat LastTwc = cv::Mat::eye(4,4,CV_32F);
-                            mLastFrame.GetRotationInverse().copyTo(LastTwc.rowRange(0,3).colRange(0,3));
-                            mLastFrame.GetCameraCenter().copyTo(LastTwc.rowRange(0,3).col(3));
-                            cv::Mat mVelocitys = mCurrentFrame.mTcw * LastTwc;
-                            cv::Mat mTcw_last = mVelocitys * mCurrentFrame.mTcw;
-                            cv::Mat Rcw_last = mTcw_last.rowRange(0,3).colRange(0,3);
-                            cv::Mat tcw_last = mTcw_last.rowRange(0,3).col(3);
-                            cv::Mat pc1c;
-                            pc1c = Rcw_last * x3Dw + tcw_last;
-                            cv::Point2f px1;
-                            px1 = mCurrentFrame.mpCamera->project(pc1c);
-                            t_uv = px1 - uv;
-                            flag = true;
-                        }
+                        
+                        cv::Mat pc;
+                        pc = Rcw_last * x3Dw + tcw_last;
+                        cv::Point2f px;
+                        px = mCurrentFrame.mpCamera->project(pc);
+                        mCurrentFrame.mvGFpoints.push_back(px);
+                        // 像素总的移动方向
+                        t_uv += px - uv;
+                        GFpoint_number++;
                         mnMatchesInliers++;
                 }
                 else
@@ -5056,67 +5055,9 @@ bool Tracking::TrackLocalMapByGF()
                 mCurrentFrame.mvpMapPoints[i] = static_cast<MapPoint*>(NULL);
         }
     }
-
-    // 相机初始世界坐标预测像素移动，存在一些问题
-    // x3Dw = -Rcw.t() * tcw;
-    // cout<< "x3Dw = " << x3Dw <<endl;
-    // x3Dc = Rcw * x3Dw + tcw;
-    // cout<< "x3Dc = " << x3Dc <<endl;
-    // uv = mCurrentFrame.mpCamera->project(x3Dc);
-    // cv::Mat LastTwc = cv::Mat::eye(4,4,CV_32F);
-    // mLastFrame.GetRotationInverse().copyTo(LastTwc.rowRange(0,3).colRange(0,3));
-    // mLastFrame.GetCameraCenter().copyTo(LastTwc.rowRange(0,3).col(3));
-    // cv::Mat mVelocitys = mCurrentFrame.mTcw * LastTwc;
-    // cv::Mat mTcw_last = mVelocitys * mCurrentFrame.mTcw;
-    // cv::Mat Rcw_last = mTcw_last.rowRange(0,3).colRange(0,3);
-    // cv::Mat tcw_last = mTcw_last.rowRange(0,3).col(3);
-    // cv::Mat pc1c;
-    // pc1c = Rcw_last * x3Dw + tcw_last;
-    // cv::Point2f px1;
-    // px1 = mCurrentFrame.mpCamera->project(pc1c);
-    // cout<< "px1 = " << px1 << " uv = " << uv <<endl;
-    // t_uv = px1 - uv;
-    // cout<< "t_uv = " << t_uv <<endl;
-
+    // 得到像素平均移动方向
+    t_uv = t_uv / GFpoint_number;
     mCurrentFrame.mvGFpoints.push_back(t_uv);
-
-    // 局部地图点投影
-    // cout<< "mvpLocalMapPoints numbers: " << mvpLocalMapPoints.size() <<endl;
-
-    // for(vector<MapPoint*>::iterator vit=mvpLocalMapPoints.begin(), vend=mvpLocalMapPoints.end(); vit!=vend; vit++)
-    // {
-    //     MapPoint* pMP = *vit;
-    //     // if(pMP->mnLastFrameSeen == mCurrentFrame.mnId)
-    //     //     continue;
-    //     if(pMP->isBad())
-    //         continue;
-
-    //     x3Dw = pMP->GetWorldPos();
-    //     x3Dc = Rcw * x3Dw + tcw;
-    //     uv = mCurrentFrame.mpCamera->project(x3Dc);
-    //     if (uv.x >=0.0 && uv.x < 752.0 && uv.y > 0.0 && uv.y < 480.0) {
-    //         mCurrentFrame.mvGFpoints.push_back(uv);
-    //     }
-
-    //     // 预测像素移动
-    //     if (flag == false) {
-    //         cv::Mat LastTwc = cv::Mat::eye(4,4,CV_32F);
-    //         mLastFrame.GetRotationInverse().copyTo(LastTwc.rowRange(0,3).colRange(0,3));
-    //         mLastFrame.GetCameraCenter().copyTo(LastTwc.rowRange(0,3).col(3));
-    //         cv::Mat mVelocitys = mCurrentFrame.mTcw * LastTwc;
-    //         cv::Mat mTcw_last = mVelocitys * mCurrentFrame.mTcw;
-    //         cv::Mat Rcw_last = mTcw_last.rowRange(0,3).colRange(0,3);
-    //         cv::Mat tcw_last = mTcw_last.rowRange(0,3).col(3);
-    //         cv::Mat pc1c;
-    //         pc1c = Rcw_last * x3Dw + tcw_last;
-    //         cv::Point2f px1;
-    //         px1 = mCurrentFrame.mpCamera->project(pc1c);
-    //         t_uv = px1 - uv;
-    //         flag = true;
-    //     }
-
-    // }
-    // mCurrentFrame.mvGFpoints.push_back(t_uv);
 
     double time_post = timer.toc();
 
@@ -5301,7 +5242,7 @@ int Tracking::SearchLocalPointsByGF()
             th=5;
             nMatched = matcher.SearchByProjection(mCurrentFrame,mvpLocalMapPoints,th);
         }
-        else if (mFrameAfterInital <= camera_fps * 3 || nToMatch < 400) { // 800)
+        else if (mFrameAfterInital <= camera_fps * 5 || nToMatch < 400) { // 800)
             nMatched = matcher.SearchByProjection(mCurrentFrame,mvpLocalMapPoints,th);
         }
         else {
@@ -5309,11 +5250,8 @@ int Tracking::SearchLocalPointsByGF()
             mObsHandler->mMapPoints = &mvpLocalMapPoints;
             mObsHandler->runMatrixBuilding(ORB_SLAM3::MAP_INFO_MATRIX, (time_total_match-time_Viz)/2, true, false);
             double time_Mat_Online = timer.toc();
-            // cout<< "mCurrentInfoMat: " << endl << mCurrentInfoMat <<endl;
             nMatched = mObsHandler->runActiveMapMatching(&mCurrentFrame, ORB_SLAM3::FRAME_INFO_MATRIX, mCurrentInfoMat,
                                                          th,matcher,num_to_match,time_total_match-time_Mat_Online-time_Viz);
-            // cout<< "run ActiveMapMatching success!" <<endl;
-            // exit(10);
         }
         double time_Match = timer.toc();
     }

@@ -58,8 +58,9 @@
 #include <vector>
 #include <iostream>
 #include <fstream>
+#include <string>
 
-#include "ORBextractor.h"
+#include <ORBextractor.h>
 
 
 using namespace cv;
@@ -569,6 +570,8 @@ ORBextractor::ORBextractor(int _nfeatures,		//指定要提取的特征点数目
         umax[v] = v0;
         ++v0;
     }
+
+    Accelerate Acc_Extractor();  // 初始化加速类
 }
 
 
@@ -1044,26 +1047,7 @@ void ORBextractor::ComputeKeyPointsOctTree(
     allKeypoints.resize(nlevels);
 
 	//图像cell的尺寸，是个正方形，可以理解为边长in像素坐标
-    cv::Point2f t_uv = sGFpoints[0][sGFpoints[0].size()-1];
-    int dis = int(sqrt(pow(t_uv.x, 2) + pow(t_uv.y, 2)));
-    float W = 20 + 2 * dis;
-    if (W > 80) {
-        W = 80;
-    }
-
-    // 获取特征点分布数据
-    // ofstream outfile("/home/kai/file/VO_SpeedUp/Dataset/feature_point/feature_points_xy.txt", ios::out | ios::app);
-    // if (!outfile.is_open()) {
-    //     cout<< "Can't Open!" <<endl;
-    //     exit(10);
-    // }
-    // for (int i=0;i<sGFpoints[0].size();i++) {
-    //     float x = sGFpoints[0][i].x;
-    //     float y = sGFpoints[0][i].y;
-    //     outfile << x << "," << y << "\n";
-    // }
-    // outfile<< "end\n";
-    // outfile.close();
+    const float W = 35;
 
     // 对每一层图像做处理
 	//遍历所有图像
@@ -1092,133 +1076,11 @@ void ORBextractor::ComputeKeyPointsOctTree(
         const int hCell = ceil(height/nRows);
 
         // 构建投影直方图
-        vector<cv::Point2f> GFpoints;
-        GFpoints.resize(sGFpoints[level].size());
-        GFpoints.assign(sGFpoints[level].begin(), sGFpoints[level].end());
-        int arr[nRows][nCols] = {0};
-        for (int i=0;i<GFpoints.size()-1;i++) {
-            int _row = GFpoints[i].y;
-            int _col = GFpoints[i].x;
-            int n_x = int(_row / hCell);
-            int n_y = int(_col / wCell);
-            if (n_x < 0 || n_y < 0 || n_x > nRows-1 || n_y > nCols-1) {
-                continue;
-            }
-            arr[n_x][n_y]++;
-        }
-        // 添加边缘
-        int col = 0;
-        int row = 0;
-        bool isBigMove = false;
-        if (t_uv.x > 0) {
-            col = ceil(t_uv.x / 35);
-            if (col > 1) {
-                // cout<< "move more big!!!" <<endl;
-                isBigMove = true;
-            }
-            if (col > 0) {
-                for (int c=0;c<col;c++) {
-                    for (int i=0;i<nRows;i++) {
-                        arr[i][nCols-c-1]++;
-                    }
-                }
-            }
-        }
-        else {
-            col = ceil(-t_uv.x / 35);
-            if (col > 1) {
-                // cout<< "move more big!!!" <<endl;
-                isBigMove = true;
-            }
-            if (col > 0) {
-                for (int c=0;c<col;c++) {
-                    for (int i=0;i<nRows;i++) {
-                        arr[i][c]++;
-                    }
-                }
-            }
-        }
-        if (t_uv.y > 0) {
-            row = ceil(t_uv.y / 35);
-            if (row > 1) {
-                // cout<< "move more big!!!" <<endl;
-                isBigMove = true;
-            }
-            if (row > 0) {
-                for (int r=0;r<row;r++) {
-                    for (int i=0;i<nCols;i++) {
-                        arr[nRows-r-1][i]++;
-                    }
-                }
-            }
-        }
-        else {
-            row = ceil(-t_uv.y / 35);
-            isBigMove = true;
-            if (row > 1) {
-                // cout<< "move more big!!!" <<endl;
-            }
-            if (row > 0) {
-                for (int r=0;r<row;r++) {
-                    for (int i=0;i<nCols;i++) {
-                        arr[r][i]++;
-                    }
-                }
-            }
-        }
-        int nEar = 0;
-        if (level == 0) {
-            // cout<< "--- host: ---" <<endl;
-            // for(int i=0;i<nRows;i++) {
-            //     for(int j=0;j<nCols;j++) {
-            //         if (arr[i][j] == 0) {
-            //             cout<< "0 ";
-            //         }
-            //         else {
-            //             cout<<"1 ";
-            //         }
-            //     }
-            //     cout<<endl;
-            // }
-            for (int r=0;r<nRows;r++) {
-                for (int i=0;i<nCols;i++) {
-                    if (arr[r][i] > 0) {
-                        nEar++;
-                    }
-                }
-            }
-            float density = float(nEar) / (nRows * nCols);
-            mnFeaturesPerLevel.clear();
-            mnFeaturesPerLevel.resize(nlevels);
-            nfeatures = 300 + density * nfeatures;
-            // cout<< "nEar = " << nEar << " nRows = " << nRows << " nCols = " << nCols <<endl;
-            // cout<< "density = " << density <<endl;
-            // cout<< "nfeatures = " << nfeatures <<endl;
-            float factor = 1.0f / scaleFactor;
-            float nDesiredFeaturesPerScale = nfeatures*(1 - factor)/(1 - (float)pow((double)factor, (double)nlevels));
-            int sumFeatures = 0;
-            for( int level = 0; level < nlevels-1; level++ )
-            {
-                mnFeaturesPerLevel[level] = cvRound(nDesiredFeaturesPerScale);
-                sumFeatures += mnFeaturesPerLevel[level];
-                nDesiredFeaturesPerScale *= factor;
-            }
-            mnFeaturesPerLevel[nlevels-1] = std::max(nfeatures - sumFeatures, 0);
-        }
-        // if (isBigMove == true) {
-        //     cout<< "--- host: ---" <<endl;
-        //     for(int i=0;i<nRows;i++) {
-        //         for(int j=0;j<nCols;j++) {
-        //             if (arr[i][j] == 0) {
-        //                 cout<< "0 ";
-        //             }
-        //             else {
-        //                 cout<<"1 ";
-        //             }
-        //         }
-        //         cout<<endl;
-        //     }
-        // }
+        Acc_Extractor.getGFpoints(sGFpoints[level], level);
+        vector<vector<int> > vStat = Acc_Extractor.buildStat(nCols, nRows, wCell, hCell, minBorderX, minBorderY);
+
+        // 计算提取特征点区域密度
+        // float density = Acc_Extractor.getDensity();
         
 
 		//开始遍历图像网格，还是以行开始遍历的
@@ -1249,7 +1111,7 @@ void ORBextractor::ComputeKeyPointsOctTree(
 				//判断坐标是否在图像中
 				//TODO 不太能够明白为什么要-6，前面不都是-3吗
 				//!BUG  正确应该是maxBorderX-3
-                if(iniX>=maxBorderX-6 || arr[i][j] == 0)
+                if(iniX>=maxBorderX-3 || vStat[i][j] == 0)
                     continue;
 				//如果最大坐标越界那么委屈一下
                 if(maxX>maxBorderX)
@@ -1331,6 +1193,10 @@ void ORBextractor::ComputeKeyPointsOctTree(
         computeOrientation(mvImagePyramid[level],	//对应的图层的图像
 						   allKeypoints[level], 	//这个图层中提取并保留下来的特征点容器
 						   umax);					//以及PATCH的横坐标边界
+    // 保留提取特征点信息
+    // Acc_Extractor.getAllKeypoints(allKeypoints);
+    // 将加速提取特征点信息通过图片保存
+    // Acc_Extractor.save();
 }
 
 //计算四叉树的特征点，函数名字后面的OctTree只是说明了在过滤和分配特征点时所使用的方式
@@ -1354,7 +1220,6 @@ void ORBextractor::ComputeKeyPointsOctTree(
         const int maxBorderX = mvImagePyramid[level].cols-EDGE_THRESHOLD+3;
         const int maxBorderY = mvImagePyramid[level].rows-EDGE_THRESHOLD+3;
 
-		//存储需要进行平均分配的特征点
         vector<cv::KeyPoint> vToDistributeKeys;
 		//一般地都是过量采集，所以这里预分配的空间大小是nfeatures*10
         vToDistributeKeys.reserve(nfeatures*10);
@@ -1846,6 +1711,9 @@ static void computeDescriptors(const Mat& image, vector<KeyPoint>& keypoints, Ma
     if (GFpoints.size() > 0) {
        //判断图像的格式是否正确，要求是单通道灰度值
         assert(image.type() == CV_8UC1 );
+
+        // 图像添加到加速类
+        Acc_Extractor.getImage(image);
 
         // Pre-compute the scale pyramid
         // Step 2 构建图像金字塔

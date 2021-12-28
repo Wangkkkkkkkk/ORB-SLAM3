@@ -22,6 +22,7 @@
 #include <vector>
 #include <list>
 #include <opencv2/opencv.hpp>
+#include <Accelerate.h>
 
 
 namespace ORB_SLAM3
@@ -102,6 +103,8 @@ protected:
     int nlevels;
     int iniThFAST;
     int minThFAST;
+
+    Accelerate Acc_Extractor;
 
     std::vector<int> mnFeaturesPerLevel;
 

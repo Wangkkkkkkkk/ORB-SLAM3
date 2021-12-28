@@ -893,7 +893,7 @@ int Observability::runActiveMapMatching(Frame *pFrame,
     // in practice, multiplication factor 1.0 works better on many sequences, 
     // mostly because it is doing feature matching rather than selection:
     // matching ratio would affect the random subset size here!
-    size_t szLazierSubset = static_cast<size_t>( float(N) / float(num_to_match) * 1.0 );
+    size_t szLazierSubset = static_cast<size_t>( float(N) / float(num_to_match) * 1.0 );  // 随机子集 = N / num_to_match
     // in theory, multiplication factor 2.3 is equivalant to decay factor of 0.1
     // size_t szLazierSubset = static_cast<size_t>( float(N) / float(num_to_match) * 2.3 );
 
@@ -911,11 +911,11 @@ int Observability::runActiveMapMatching(Frame *pFrame,
 #endif
         size_t numHit = 0, numRndQue = 0, szActualSubset;
         szActualSubset = szLazierSubset;
-        if (lmkIdx.n_cols < szActualSubset)
+        if (lmkIdx.n_cols < szActualSubset)  // 总地图点少于随机子集，将随机子集 = 地图点数
             szActualSubset = lmkIdx.n_cols;
         //
         //        std::srand(std::time(nullptr));
-        while (numHit < szActualSubset) {
+        while (numHit < szActualSubset) {   // 集合数少于随机子集，继续
             // generate random query index
 #ifdef OBS_DEBUG_VERBOSE
             cout << "random query round " << numHit << endl;
@@ -925,7 +925,7 @@ int Observability::runActiveMapMatching(Frame *pFrame,
             while (numRndQue < MAX_RANDOM_QUERY_TIME) {
                 j = ( std::rand() % lmkIdx.n_cols );
                 //                cout << j << " ";
-                // check if visited
+                // check if visited  随机到的 j 的 Visited 的值和上一次的匹配数量一致，说明没有新的匹配增加，这样的情况出现 20 ，则跳出循环
                 if (lmkVisited.at(0, j) < nMatched) {
                     lmkVisited.at(0, j) = nMatched;
                     break ;
@@ -948,9 +948,11 @@ int Observability::runActiveMapMatching(Frame *pFrame,
             }
 
             // else, the queried map point is updated in time, and being assessed with potential info gain
+            if (size(mMapPoints->at(queIdx)->ObsMat)[0] != 7) {continue;}  // 可能存在 ObsMat 不存在，加一个判断
             double curDet = logDet( curMat + mMapPoints->at(queIdx)->ObsMat );
             double response = mMapPoints->at(queIdx)->response;
-            curDet += response;
+            // cout<< "curDet = " << curDet << " response = " << response <<endl;
+            // curDet += response;
 #ifdef INFORMATION_EFFICIENCY_SCORE
             heapSubset.push(SimplePoint(queIdx, curDet / double(curCost + mMapPoints->at(queIdx)->mvMatchCandidates.size())));
 #else
