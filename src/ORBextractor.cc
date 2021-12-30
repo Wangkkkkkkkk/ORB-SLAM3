@@ -61,6 +61,7 @@
 #include <string>
 
 #include <ORBextractor.h>
+#include <Frame.h>
 
 
 using namespace cv;
@@ -1193,10 +1194,13 @@ void ORBextractor::ComputeKeyPointsOctTree(
         computeOrientation(mvImagePyramid[level],	//对应的图层的图像
 						   allKeypoints[level], 	//这个图层中提取并保留下来的特征点容器
 						   umax);					//以及PATCH的横坐标边界
-    // 保留提取特征点信息
-    // Acc_Extractor.getAllKeypoints(allKeypoints);
-    // 将加速提取特征点信息通过图片保存
-    // Acc_Extractor.save();
+    
+    // Acc_Extractor.getAllKeypoints(allKeypoints);   // 保留提取特征点信息
+    
+    // Acc_Extractor.saveExtractor();        // 将加速提取特征点信息通过图片保存
+    
+    Acc_Extractor.save2Ddis();   // 
+
 }
 
 //计算四叉树的特征点，函数名字后面的OctTree只是说明了在过滤和分配特征点时所使用的方式
@@ -1696,7 +1700,7 @@ static void computeDescriptors(const Mat& image, vector<KeyPoint>& keypoints, Ma
  * @param[in & out] _descriptors              存储特征点描述子的矩阵
  */
     int ORBextractor::operator()( InputArray _image, InputArray _mask, vector<KeyPoint>& _keypoints,
-                                  OutputArray _descriptors, std::vector<int> &vLappingArea, vector<cv::Point2f> GFpoints)
+                                  OutputArray _descriptors, std::vector<int> &vLappingArea, Frame* mPreframe)
     {
 	// Step 1 检查图像有效性。如果图像为空，那么就直接返回
         if(_image.empty())
@@ -1708,21 +1712,24 @@ static void computeDescriptors(const Mat& image, vector<KeyPoint>& keypoints, Ma
     // 根据投影点聚类特征提取网格
     vector < vector<KeyPoint> > allKeypoints;
     vector<vector<cv::Point2f> > sGFpoints;
-    if (GFpoints.size() > 0) {
+    if (mPreframe != NULL && mPreframe->isGFpoints == true) {
        //判断图像的格式是否正确，要求是单通道灰度值
         assert(image.type() == CV_8UC1 );
 
         // 图像添加到加速类
         Acc_Extractor.getImage(image);
 
+        // 上一帧信息添加到类
+        Acc_Extractor.getPreframe(mPreframe);
+
         // Pre-compute the scale pyramid
         // Step 2 构建图像金字塔
-        sGFpoints = ComputePyramid(image, GFpoints);
-
+        sGFpoints = ComputePyramid(image, Acc_Extractor.vGFpoints_origin);
         // Step 3 计算图像的特征点，并且将特征点进行均匀化。均匀的特征点可以提高位姿计算精度
         // 存储所有的特征点，注意此处为二维的vector，第一维存储的是金字塔的层数，第二维存储的是那一层金字塔图像里提取的所有特征点
 
         //使用四叉树的方式计算每层图像的特征点并进行分配
+
         ComputeKeyPointsOctTree(allKeypoints, sGFpoints);
     }
     else {

@@ -3,10 +3,10 @@
 */
 
 
-#include<iostream>
-#include<System.h>
+#include <iostream>
+#include <System.h>
 #include <opencv2/opencv.hpp>
-#include<Accelerate.h>
+#include <Accelerate.h>
 
 using namespace std;
 using namespace cv;
@@ -22,13 +22,63 @@ void Accelerate::getImage(Mat images) {
     mImages = images.clone();
 }
 
+void Accelerate::getPreframe(Frame* mPreframe) {
+    // 得到相机变换矩阵信息
+    mTcw_pre = mPreframe->mTcw;
+    mPredictTcw = mPreframe->mPredictTcw;
+    mPredictTcw_last = mPreframe->mPredictTcw_last;
+
+    // 优特征点投影
+    Mat Rcw = mTcw_pre.rowRange(0,3).colRange(0,3);
+    Mat tcw = mTcw_pre.rowRange(0,3).col(3);
+
+    Mat Rcw_last = mPredictTcw.rowRange(0,3).colRange(0,3);
+    Mat tcw_last = mPredictTcw.rowRange(0,3).col(3);
+
+    Mat Rcw_prelast = mPredictTcw_last.rowRange(0,3).colRange(0,3);
+    Mat tcw_prelast = mPredictTcw_last.rowRange(0,3).col(3);
+
+    int GFpoint_number = 0;
+    vGFpoints_origin.clear();
+    vpDis.clear();
+    for(int i=0; i<mPreframe->N; i++)
+    {
+        if(mPreframe->mvpMapPoints[i])
+        {
+            if(!mPreframe->mvbOutlier[i])
+            {
+                mPreframe->mvpMapPoints[i]->IncreaseFound();
+                if(mPreframe->mvpMapPoints[i]->Observations()>0)
+                {
+                    // 提前将优特征点投影到预测下一帧的图像上，下一帧位姿采用恒速模型
+                    cv::Mat x3Dw = mPreframe->mvpMapPoints[i]->GetWorldPos();
+
+                    cv::Mat x3Dc = Rcw * x3Dw + tcw;
+                    Point2f uv = mPreframe->mpCamera->project(x3Dc);
+                    
+                    cv::Mat pc = Rcw_last * x3Dw + tcw_last;
+                    cv::Point2f px = mPreframe->mpCamera->project(pc);
+
+                    cv::Mat x3Dc_pre = Rcw_prelast * x3Dw + tcw_prelast;
+                    cv::Point2f uv_pre = mPreframe->mpCamera->project(x3Dc_pre);
+
+                    vGFpoints_origin.push_back(px);
+                    vpDis.push_back(uv - uv_pre);
+                    // 像素总的移动方向
+                    pMove += px - uv;
+                    GFpoint_number++;
+                }
+            }
+        }
+    }
+    // 得到像素平均移动方向
+    pMove = pMove / GFpoint_number;
+
+}
+
 void Accelerate::getGFpoints(vector<Point2f> GFpoints, int _level) {
     level = _level;
     vGFpoints.assign(GFpoints.begin(), GFpoints.end());
-    if (level == 0) {
-        vGFpoints_origin.assign(GFpoints.begin(), GFpoints.end());
-        pMove = GFpoints[GFpoints.size()-1];
-    }
 }
 
 vector<vector<int> > Accelerate::buildStat(int _nCols, int _nRows, int _wCell, int _hCell, int _minBorderX, int _minBorderY) {
@@ -42,7 +92,7 @@ vector<vector<int> > Accelerate::buildStat(int _nCols, int _nRows, int _wCell, i
     vStat.resize(nRows,vstat);
 
     // 根据投影点选择提取特征区域
-    for (int i=0;i<vGFpoints.size()-1;i++) {
+    for (int i=0;i<vGFpoints.size();i++) {
         int _col = vGFpoints[i].x;
         int _row = vGFpoints[i].y;
         int n_x = (_col - minBorderX) / wCell;
@@ -179,7 +229,7 @@ void Accelerate::getAllKeypoints(vector<vector<KeyPoint> > allkeypoints){
     }
 }
 
-void Accelerate::save() {
+void Accelerate::saveExtractor() {
     Mat _images;
     cvtColor(mImages, _images, COLOR_GRAY2BGR);
     string numb = to_string(nNumber);
@@ -219,4 +269,64 @@ void Accelerate::save() {
     imwrite(filename, _images);
     nNumber++;
 }
+
+void Accelerate::save2Ddis() {
+    Mat img(1000, 1000, CV_8UC1, Scalar(255,255,255));
+
+    string numb = to_string(nNumber);
+    string filename = "/home/kai/file/VO_SpeedUp/Dataset/feature_projectDis/" + numb + ".png";
+
+    arrowedLine(img, Point(0, 500), Point(1000, 500), Scalar(0, 0, 0), 2, 8, 0, 0.02);
+    arrowedLine(img, Point(500, 0), Point(500, 1000), Scalar(0, 0, 0), 2, 8, 0, 0.02);
+
+    // X 轴正向
+    line(img, Point(550, 500), Point(550, 490), Scalar(0, 0, 0), 2);
+    putText(img, "2", cvPoint(545, 525), FONT_HERSHEY_SIMPLEX, 0.5, CV_RGB(255, 0, 0), 1);
+    line(img, Point(600, 500), Point(600, 490), Scalar(0, 0, 0), 2);
+    putText(img, "4", cvPoint(595, 525), FONT_HERSHEY_SIMPLEX, 0.5, CV_RGB(255, 0, 0), 1);
+    line(img, Point(650, 500), Point(650, 490), Scalar(0, 0, 0), 2);
+    putText(img, "6", cvPoint(645, 525), FONT_HERSHEY_SIMPLEX, 0.5, CV_RGB(255, 0, 0), 1);
+    line(img, Point(700, 500), Point(700, 490), Scalar(0, 0, 0), 2);
+    putText(img, "8", cvPoint(695, 525), FONT_HERSHEY_SIMPLEX, 0.5, CV_RGB(255, 0, 0), 1);
+    line(img, Point(750, 500), Point(750, 490), Scalar(0, 0, 0), 2);
+    putText(img, "10", cvPoint(740, 525), FONT_HERSHEY_SIMPLEX, 0.5, CV_RGB(255, 0, 0), 1);
+    line(img, Point(800, 500), Point(800, 490), Scalar(0, 0, 0), 2);
+    putText(img, "12", cvPoint(790, 525), FONT_HERSHEY_SIMPLEX, 0.5, CV_RGB(255, 0, 0), 1);
+    line(img, Point(850, 500), Point(850, 490), Scalar(0, 0, 0), 2);
+    putText(img, "14", cvPoint(840, 525), FONT_HERSHEY_SIMPLEX, 0.5, CV_RGB(255, 0, 0), 1);
+    line(img, Point(900, 500), Point(900, 490), Scalar(0, 0, 0), 2);
+    putText(img, "16", cvPoint(890, 525), FONT_HERSHEY_SIMPLEX, 0.5, CV_RGB(255, 0, 0), 1);
+    line(img, Point(950, 500), Point(950, 490), Scalar(0, 0, 0), 2);
+    putText(img, "18", cvPoint(940, 525), FONT_HERSHEY_SIMPLEX, 0.5, CV_RGB(255, 0, 0), 1);
+
+    // X 轴负向
+    line(img, Point(450, 500), Point(450, 490), Scalar(0, 0, 0), 2);
+    putText(img, "-2", cvPoint(440, 525), FONT_HERSHEY_SIMPLEX, 0.5, CV_RGB(255, 0, 0), 1);
+    line(img, Point(400, 500), Point(400, 490), Scalar(0, 0, 0), 2);
+    putText(img, "-4", cvPoint(390, 525), FONT_HERSHEY_SIMPLEX, 0.5, CV_RGB(255, 0, 0), 1);
+    line(img, Point(350, 500), Point(350, 490), Scalar(0, 0, 0), 2);
+    putText(img, "-6", cvPoint(340, 525), FONT_HERSHEY_SIMPLEX, 0.5, CV_RGB(255, 0, 0), 1);
+    line(img, Point(300, 500), Point(300, 490), Scalar(0, 0, 0), 2);
+    putText(img, "-8", cvPoint(290, 525), FONT_HERSHEY_SIMPLEX, 0.5, CV_RGB(255, 0, 0), 1);
+    line(img, Point(250, 500), Point(250, 490), Scalar(0, 0, 0), 2);
+    putText(img, "-10", cvPoint(235, 525), FONT_HERSHEY_SIMPLEX, 0.5, CV_RGB(255, 0, 0), 1);
+    line(img, Point(200, 500), Point(200, 490), Scalar(0, 0, 0), 2);
+    putText(img, "-12", cvPoint(185, 525), FONT_HERSHEY_SIMPLEX, 0.5, CV_RGB(255, 0, 0), 1);
+    line(img, Point(150, 500), Point(150, 490), Scalar(0, 0, 0), 2);
+    putText(img, "-14", cvPoint(135, 525), FONT_HERSHEY_SIMPLEX, 0.5, CV_RGB(255, 0, 0), 1);
+    line(img, Point(100, 500), Point(100, 490), Scalar(0, 0, 0), 2);
+    putText(img, "-16", cvPoint(85, 525), FONT_HERSHEY_SIMPLEX, 0.5, CV_RGB(255, 0, 0), 1);
+    line(img, Point(50, 500), Point(50, 490), Scalar(0, 0, 0), 2);
+    putText(img, "-18", cvPoint(35, 525), FONT_HERSHEY_SIMPLEX, 0.5, CV_RGB(255, 0, 0), 1);
+
+    for (int i=0;i<vpDis.size();i++) {
+        int x = vpDis[i].x * 25 + 500;
+        int y = vpDis[i].y * 25 + 500;
+        circle(img, cvPoint(x,y), 5, Scalar(0, 255, 0), 2, 4, 0);
+    }
+
+    imwrite(filename, img);
+    nNumber++;
+}
+
 }   //namespace ORB_SLAM

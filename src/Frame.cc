@@ -74,7 +74,8 @@ Frame::Frame(const Frame &frame)
      monoLeft(frame.monoLeft), monoRight(frame.monoRight), mvLeftToRightMatch(frame.mvLeftToRightMatch),
      mvRightToLeftMatch(frame.mvRightToLeftMatch), mvStereo3Dpoints(frame.mvStereo3Dpoints),
      mTlr(frame.mTlr.clone()), mRlr(frame.mRlr.clone()), mtlr(frame.mtlr.clone()), mTrl(frame.mTrl.clone()),
-     mTrlx(frame.mTrlx), mTlrx(frame.mTlrx), mOwx(frame.mOwx), mRcwx(frame.mRcwx), mtcwx(frame.mtcwx), mvGFpoints(frame.mvGFpoints)
+     mTrlx(frame.mTrlx), mTlrx(frame.mTlrx), mOwx(frame.mOwx), mRcwx(frame.mRcwx), mtcwx(frame.mtcwx),
+     mPredictTcw(frame.mPredictTcw), mPredictTcw_last(frame.mPredictTcw_last), isGFpoints(frame.isGFpoints)
 {
     for(int i=0;i<FRAME_GRID_COLS;i++)
         for(int j=0; j<FRAME_GRID_ROWS; j++){
@@ -340,6 +341,9 @@ Frame::Frame(const cv::Mat &imGray, const double &timeStamp, ORBextractor* extra
      mImuCalib(ImuCalib), mpImuPreintegrated(NULL),mpPrevFrame(pPrevF),mpImuPreintegratedFrame(NULL), mpReferenceKF(static_cast<KeyFrame*>(NULL)), mbImuPreintegrated(false), mpCamera(pCamera),
      mpCamera2(nullptr)
 {
+    // 优特征点投影
+    isGFpoints = false;
+
     // Frame ID
 	// Step 1 帧的ID 自增
     mnId=nNextId++;
@@ -372,7 +376,7 @@ Frame::Frame(const cv::Mat &imGray, const double &timeStamp, ORBextractor* extra
 
     mTimeORB_Ext = std::chrono::duration_cast<std::chrono::duration<double,std::milli> >(time_EndExtORB - time_StartExtORB).count();
 #endif
-	
+
     //提取特征点的个数
     N = mvKeys.size();
 	//如果没有能够成功提取出特征点，那么就直接返回了
@@ -498,7 +502,7 @@ void Frame::ExtractORB(int flag, const cv::Mat &im, const int x0, const int x1)
     if(flag==0)
 		// 左图的话就套使用左图指定的特征点提取器，并将提取结果保存到对应的变量中 
         if (mpPrevFrame != NULL) {
-            monoLeft = (*mpORBextractorLeft)(im,cv::Mat(),mvKeys,mDescriptors,vLapping, mpPrevFrame->mvGFpoints);
+            monoLeft = (*mpORBextractorLeft)(im,cv::Mat(),mvKeys,mDescriptors,vLapping, mpPrevFrame);
         }
         else {
             monoLeft = (*mpORBextractorLeft)(im,cv::Mat(),mvKeys,mDescriptors,vLapping);
@@ -506,7 +510,7 @@ void Frame::ExtractORB(int flag, const cv::Mat &im, const int x0, const int x1)
     else
 		// 右图的话就需要使用右图指定的特征点提取器，并将提取结果保存到对应的变量中 
         if (mpPrevFrame != NULL) {
-            monoRight = (*mpORBextractorRight)(im,cv::Mat(),mvKeysRight,mDescriptorsRight,vLapping, mpPrevFrame->mvGFpoints);
+            monoRight = (*mpORBextractorRight)(im,cv::Mat(),mvKeysRight,mDescriptorsRight,vLapping, mpPrevFrame);
         }
         else {
             monoRight = (*mpORBextractorRight)(im,cv::Mat(),mvKeysRight,mDescriptorsRight,vLapping);

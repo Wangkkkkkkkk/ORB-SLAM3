@@ -28,6 +28,8 @@
 namespace ORB_SLAM3
 {
 
+class Frame;
+
 class ExtractorNode
 {
 public:
@@ -58,7 +60,7 @@ public:
     int operator()( cv::InputArray _image, cv::InputArray _mask,
                     std::vector<cv::KeyPoint>& _keypoints,
                     cv::OutputArray _descriptors, std::vector<int> &vLappingArea,
-                    std::vector<cv::Point2f> GFpoints = std::vector<cv::Point2f>(0));
+                    Frame* mPreframe = static_cast<Frame*>(NULL));
 
     int inline GetLevels(){
         return nlevels;}
@@ -86,7 +88,7 @@ public:
 
 protected:
 
-    std::vector<std::vector<cv::Point2f> > ComputePyramid(cv::Mat image, std::vector<cv::Point2f> GFpoints);
+    std::vector<std::vector<cv::Point2f> > ComputePyramid(cv::Mat image, vector<cv::Point2f> GFpoints);
     void ComputePyramid(cv::Mat image);
     void ComputeKeyPointsOctTree(std::vector<std::vector<cv::KeyPoint> >& allKeypoints, std::vector<std::vector<cv::Point2f> > sGFpoints);
     void ComputeKeyPointsOctTree(std::vector<std::vector<cv::KeyPoint> >& allKeypoints);

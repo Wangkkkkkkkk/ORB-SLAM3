@@ -266,6 +266,11 @@ public:
     // Camera pose.
     cv::Mat mTcw;
 
+    // Camera predict pose;
+    cv::Mat mPredictTcw;
+
+    cv::Mat mPredictTcw_last;
+
     // IMU linear velocity
     cv::Mat mVw;
 
@@ -323,8 +328,7 @@ public:
 
     vector<pair<int, int> > mvDistIdx;
 
-    // 优特征点投影下一帧的投影点保存
-    vector<cv::Point2f> mvGFpoints;
+    bool isGFpoints;
 
 #ifdef REGISTER_TIMES
     double mTimeORB_Ext;
