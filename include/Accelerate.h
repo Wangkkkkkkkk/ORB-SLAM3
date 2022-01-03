@@ -21,58 +21,63 @@ class Accelerate
 {
 public:
 
-    Accelerate();
+    Accelerate(int _nlevels);
 
     ~Accelerate(){}
 
     void getImage(Mat images);
     void getPreframe(Frame* mPreframe);
-    void getGFpoints(vector<Point2f> GFpoints, int _level);
-    vector<vector<int> > buildStat(int _nCols, int _nRows, int _wCell, int _hCell, int _minBorderX, int _minBorderY);  // 构建统计数组
-    float getDensity();
+    vector<vector<int> > buildStat(int _nCols, int _nRows, int _wCell, int _hCell, 
+                                   int _minBorderX, int _minBorderY, int _maxBorderX, int _maxBorderY,
+                                   int _level, float _W);  // 构建统计数组
+    void computeMean();
+    void addCellEdge(int n_x, int n_y, int _col, int _row);
+    void addDensity();
     void addEdge();
     void getAllKeypoints(vector<vector<KeyPoint> > allkeypoints);
     void saveExtractor();
     void save2Ddis();
 
-
+    int nlevels;
     Mat mImages;                 // 当前图像帧
-    // Frame* mPreframe;             // 前一帧信息
 
     Mat mPredictTcw_last;         // 上一帧预测的相机变换矩阵
     Mat mTcw_pre;                // 上一帧相机变换矩阵
     Mat mPredictTcw;             // 当前帧预测的相机变换矩阵
-    
-    Point2f pMove;                   // 像素移动方向
 
-
-    // 金字塔第0层信息
-    vector<Point2f> vGFpoints_origin;
-    vector<vector<int> > vStat_origin;
-    int nCols_origin;
-    int nRows_origin;
-    int wCell_origin;
-    int hCell_origin;
-    int minBorderX_origin;
-    int minBorderY_origin;
-
+    int nW;
     int level;                       // 当前金字塔层级
-    vector<Point2f> vGFpoints;       // 优地图点
-    vector<vector<int> > vStat;      // 统计矩阵
-    int nCols;
-    int nRows;
-    int wCell;
-    int hCell;
-    int minBorderX;
-    int minBorderY;
+    vector<vector<Point2f> > vGFpoints;       // 优地图点
+    vector<vector<vector<int> > > vStat;      // 统计矩阵
+    vector<vector<vector<int> > > vStat_pre;      // 统计矩阵
+    vector<vector<vector<int> > > vStat_out;      // 统计矩阵
 
-    float density;                 // 提取特征区域密度
+    vector<int> nCols;
+    vector<int> nRows;
+    vector<int> wCell;
+    vector<int> hCell;
+    vector<int> minBorderX;
+    vector<int> minBorderY;
+    vector<int> maxBorderX;
+    vector<int> maxBorderY;
+
+    vector<Point2f> pMove;                   // 像素移动方向
+
+    vector<vector<Point2f> > vpDis;         // 恒速模型投影误差
+    vector<Point2f> pfCenter;                // 误差均值
+    vector<float> fVariance;               // 误差方差
+    vector<float> fDistance;
+
+    vector<float> density;                 // 提取特征区域密度
 
     vector<vector<KeyPoint> > vAllkeypoints;  // 提取的所有特征点
 
-    int nNumber;                     // 调试用，帧数
+    int nNumber;                     // 调试用，保存帧数
 
-    vector<Point2f> vpDis;         // 恒速模型投影误差
+    int dis_parallel[4][2];
+    int dis_tilted[4][2];
+
+    
 
 };
 

@@ -572,7 +572,7 @@ ORBextractor::ORBextractor(int _nfeatures,		//指定要提取的特征点数目
         ++v0;
     }
 
-    Accelerate Acc_Extractor();  // 初始化加速类
+    Acc_Extractor = new Accelerate(nlevels); // 初始化加速类
 }
 
 
@@ -1041,7 +1041,7 @@ vector<cv::KeyPoint> ORBextractor::DistributeOctTree(const vector<cv::KeyPoint>&
 
 //计算四叉树的特征点，函数名字后面的OctTree只是说明了在过滤和分配特征点时所使用的方式
 void ORBextractor::ComputeKeyPointsOctTree(
-	vector<vector<KeyPoint> >& allKeypoints, vector<vector<cv::Point2f> > sGFpoints)	//所有的特征点，这里第一层vector存储的是某图层里面的所有特征点，
+	vector<vector<KeyPoint> >& allKeypoints, bool isGFpoints)	//所有的特征点，这里第一层vector存储的是某图层里面的所有特征点，
 												//第二层存储的是整个图像金字塔中的所有图层里面的所有特征点
 {
 	//重新调整图像层数
@@ -1077,12 +1077,9 @@ void ORBextractor::ComputeKeyPointsOctTree(
         const int hCell = ceil(height/nRows);
 
         // 构建投影直方图
-        Acc_Extractor.getGFpoints(sGFpoints[level], level);
-        vector<vector<int> > vStat = Acc_Extractor.buildStat(nCols, nRows, wCell, hCell, minBorderX, minBorderY);
-
-        // 计算提取特征点区域密度
-        // float density = Acc_Extractor.getDensity();
-        
+        vector<vector<int> > vStat = Acc_Extractor->buildStat(nCols, nRows, wCell, hCell,
+                                                              minBorderX, minBorderY, maxBorderX, maxBorderY,
+                                                              level, W);
 
 		//开始遍历图像网格，还是以行开始遍历的
         for(int i=0; i<nRows; i++)
@@ -1194,13 +1191,11 @@ void ORBextractor::ComputeKeyPointsOctTree(
         computeOrientation(mvImagePyramid[level],	//对应的图层的图像
 						   allKeypoints[level], 	//这个图层中提取并保留下来的特征点容器
 						   umax);					//以及PATCH的横坐标边界
+    // Acc_Extractor->getAllKeypoints(allKeypoints);   // 保留提取特征点信息
     
-    // Acc_Extractor.getAllKeypoints(allKeypoints);   // 保留提取特征点信息
+    // Acc_Extractor->saveExtractor();        // 将加速提取特征点信息通过图片保存
     
-    // Acc_Extractor.saveExtractor();        // 将加速提取特征点信息通过图片保存
-    
-    Acc_Extractor.save2Ddis();   // 
-
+    // Acc_Extractor->save2Ddis();   // 
 }
 
 //计算四叉树的特征点，函数名字后面的OctTree只是说明了在过滤和分配特征点时所使用的方式
@@ -1267,7 +1262,7 @@ void ORBextractor::ComputeKeyPointsOctTree(
 				//判断坐标是否在图像中
 				//TODO 不太能够明白为什么要-6，前面不都是-3吗
 				//!BUG  正确应该是maxBorderX-3
-                if(iniX>=maxBorderX-6)
+                if(iniX>=maxBorderX-3)
                     continue;
 				//如果最大坐标越界那么委屈一下
                 if(maxX>maxBorderX)
@@ -1717,20 +1712,20 @@ static void computeDescriptors(const Mat& image, vector<KeyPoint>& keypoints, Ma
         assert(image.type() == CV_8UC1 );
 
         // 图像添加到加速类
-        Acc_Extractor.getImage(image);
+        Acc_Extractor->getImage(image);
 
         // 上一帧信息添加到类
-        Acc_Extractor.getPreframe(mPreframe);
+        Acc_Extractor->getPreframe(mPreframe);
 
         // Pre-compute the scale pyramid
         // Step 2 构建图像金字塔
-        sGFpoints = ComputePyramid(image, Acc_Extractor.vGFpoints_origin);
+        ComputePyramid(image, mPreframe->isGFpoints);
+
         // Step 3 计算图像的特征点，并且将特征点进行均匀化。均匀的特征点可以提高位姿计算精度
         // 存储所有的特征点，注意此处为二维的vector，第一维存储的是金字塔的层数，第二维存储的是那一层金字塔图像里提取的所有特征点
 
         //使用四叉树的方式计算每层图像的特征点并进行分配
-
-        ComputeKeyPointsOctTree(allKeypoints, sGFpoints);
+        ComputeKeyPointsOctTree(allKeypoints, mPreframe->isGFpoints);
     }
     else {
         //判断图像的格式是否正确，要求是单通道灰度值
@@ -1855,9 +1850,8 @@ static void computeDescriptors(const Mat& image, vector<KeyPoint>& keypoints, Ma
 	 * 构建图像金字塔
 	 * @param image 输入原图像，这个输入图像所有像素都是有效的，也就是说都是可以在其上提取出FAST角点的
 	 */
-    vector<vector<cv::Point2f> > ORBextractor::ComputePyramid(cv::Mat image, vector<cv::Point2f> GFpoints)
+    void ORBextractor::ComputePyramid(cv::Mat image, bool isGFpoints)
     {
-        vector<vector<cv::Point2f> > output;
         for (int level = 0; level < nlevels; ++level)
         {
             float scale = mvInvScaleFactor[level];
@@ -1871,11 +1865,21 @@ static void computeDescriptors(const Mat& image, vector<KeyPoint>& keypoints, Ma
             if( level != 0 )
             {
                 // 计算缩放后的投影点
-                for (int i=0;i<GFpoints.size();i++) {
-                    GFpoints[i].x *= 1 / 1.2;
-                    GFpoints[i].y *= 1 / 1.2;
+                Acc_Extractor->vGFpoints[level].clear();
+                Acc_Extractor->vpDis[level].clear();
+                for (int i=0;i<Acc_Extractor->vGFpoints[0].size();i++) {
+                    float _x = Acc_Extractor->vGFpoints[level-1][i].x / scaleFactor;
+                    float _y = Acc_Extractor->vGFpoints[level-1][i].y / scaleFactor;
+                    Point2f _xy = cvPoint2D32f(_x, _y);
+                    Acc_Extractor->vGFpoints[level].push_back(_xy);
                 }
-                output.push_back(GFpoints);
+                for (int i=0;i<Acc_Extractor->vpDis[0].size();i++) {
+                    float _x = Acc_Extractor->vpDis[level-1][i].x / scaleFactor;
+                    float _y = Acc_Extractor->vpDis[level-1][i].y / scaleFactor;
+                    Point2f _xy = cvPoint2D32f(_x, _y);
+                    Acc_Extractor->vpDis[level].push_back(_xy);
+                }
+                Acc_Extractor->pMove[level] = Acc_Extractor->pMove[level-1] / scaleFactor;
 
                 //将上一层金字塔图像根据设定sz缩放到当前层级
                 resize(mvImagePyramid[level-1],	//输入图像
@@ -1908,9 +1912,6 @@ static void computeDescriptors(const Mat& image, vector<KeyPoint>& keypoints, Ma
             }
             else
             {
-                // 对于第一层，直接复制
-                output.push_back(GFpoints);
-
                 //对于底层图像，直接就扩充边界了
                 //?temp 是在循环内部新定义的，在该函数里又作为输出，并没有使用啊！
                 copyMakeBorder(image,			//这里是原图像
@@ -1918,7 +1919,6 @@ static void computeDescriptors(const Mat& image, vector<KeyPoint>& keypoints, Ma
                             BORDER_REFLECT_101);            
             }
         }
-        return output;
     }
 
     void ORBextractor::ComputePyramid(cv::Mat image)

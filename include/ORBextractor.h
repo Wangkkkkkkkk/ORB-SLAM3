@@ -29,6 +29,7 @@ namespace ORB_SLAM3
 {
 
 class Frame;
+class Accelerate;
 
 class ExtractorNode
 {
@@ -88,9 +89,9 @@ public:
 
 protected:
 
-    std::vector<std::vector<cv::Point2f> > ComputePyramid(cv::Mat image, vector<cv::Point2f> GFpoints);
+    void ComputePyramid(cv::Mat image, bool isGFpoints);
     void ComputePyramid(cv::Mat image);
-    void ComputeKeyPointsOctTree(std::vector<std::vector<cv::KeyPoint> >& allKeypoints, std::vector<std::vector<cv::Point2f> > sGFpoints);
+    void ComputeKeyPointsOctTree(std::vector<std::vector<cv::KeyPoint> >& allKeypoints, bool isGFpoints);
     void ComputeKeyPointsOctTree(std::vector<std::vector<cv::KeyPoint> >& allKeypoints);
     std::vector<cv::KeyPoint> DistributeOctTree(const std::vector<cv::KeyPoint>& vToDistributeKeys, const int &minX,
                                            const int &maxX, const int &minY, const int &maxY, const int &nFeatures, const int &level);
@@ -106,7 +107,7 @@ protected:
     int iniThFAST;
     int minThFAST;
 
-    Accelerate Acc_Extractor;
+    Accelerate* Acc_Extractor;
 
     std::vector<int> mnFeaturesPerLevel;
 

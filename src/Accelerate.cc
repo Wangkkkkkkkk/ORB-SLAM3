@@ -2,23 +2,55 @@
 * This file is part of FORB-SLAM
 */
 
-
 #include <iostream>
 #include <System.h>
 #include <opencv2/opencv.hpp>
 #include <Accelerate.h>
+#include <Eigen/Dense>
 
+using namespace Eigen; 
 using namespace std;
 using namespace cv;
 
 namespace ORB_SLAM3
 {
 
-Accelerate::Accelerate() {
-    nNumber = 0;
+Accelerate::Accelerate(int _nlevels):
+    nlevels(_nlevels)
+{
+    nNumber = -1;
+
+    vGFpoints.resize(nlevels);
+    vStat.resize(nlevels);
+    vStat_pre.resize(nlevels);
+    vStat_out.resize(nlevels);
+    nCols.resize(nlevels);
+    nRows.resize(nlevels);
+    wCell.resize(nlevels);
+    hCell.resize(nlevels);
+    minBorderX.resize(nlevels);
+    minBorderY.resize(nlevels);
+    maxBorderX.resize(nlevels);
+    maxBorderY.resize(nlevels);
+
+    pMove.resize(nlevels);
+
+    vpDis.resize(nlevels);
+    pfCenter.resize(nlevels);
+    fVariance.resize(nlevels);
+    fDistance.resize(nlevels);
+
+    density.resize(nlevels);
+
+    int _dis_parallel[4][2] = {{0,1},{0,-1},{1,0},{-1,0}};
+    int _dis_tilted[4][2] = {{1,1},{1,-1},{1,1},{-1,1}};
+
+    memcpy(dis_parallel, _dis_parallel, sizeof(_dis_parallel));
+    memcpy(dis_tilted, _dis_tilted, sizeof(_dis_tilted));
 }
 
 void Accelerate::getImage(Mat images) {
+    nNumber++;
     mImages = images.clone();
 }
 
@@ -39,8 +71,8 @@ void Accelerate::getPreframe(Frame* mPreframe) {
     Mat tcw_prelast = mPredictTcw_last.rowRange(0,3).col(3);
 
     int GFpoint_number = 0;
-    vGFpoints_origin.clear();
-    vpDis.clear();
+    vGFpoints[0].clear();
+    vpDis[0].clear();
     for(int i=0; i<mPreframe->N; i++)
     {
         if(mPreframe->mvpMapPoints[i])
@@ -62,164 +94,209 @@ void Accelerate::getPreframe(Frame* mPreframe) {
                     cv::Mat x3Dc_pre = Rcw_prelast * x3Dw + tcw_prelast;
                     cv::Point2f uv_pre = mPreframe->mpCamera->project(x3Dc_pre);
 
-                    vGFpoints_origin.push_back(px);
-                    vpDis.push_back(uv - uv_pre);
+                    vGFpoints[0].push_back(px);
+                    vpDis[0].push_back(uv - uv_pre);
                     // 像素总的移动方向
-                    pMove += px - uv;
+                    pMove[0] += px - uv;
                     GFpoint_number++;
                 }
             }
         }
     }
     // 得到像素平均移动方向
-    pMove = pMove / GFpoint_number;
-
+    pMove[0] = pMove[0] / GFpoint_number;
 }
 
-void Accelerate::getGFpoints(vector<Point2f> GFpoints, int _level) {
+vector<vector<int> > Accelerate::buildStat(int _nCols, int _nRows, int _wCell, int _hCell,
+                                           int _minBorderX, int _minBorderY, int _maxBorderX, int _maxBorderY,
+                                           int _level, float _W) {
     level = _level;
-    vGFpoints.assign(GFpoints.begin(), GFpoints.end());
-}
+    nW = _W;
+    nCols[level] = _nCols;
+    nRows[level] = _nRows;
+    wCell[level] = _wCell;
+    hCell[level] = _hCell;
+    minBorderX[level] = _minBorderX;
+    minBorderY[level] = _minBorderY;
+    maxBorderX[level] = _maxBorderX;
+    maxBorderY[level] = _maxBorderY;
 
-vector<vector<int> > Accelerate::buildStat(int _nCols, int _nRows, int _wCell, int _hCell, int _minBorderX, int _minBorderY) {
-    nCols = _nCols;
-    nRows = _nRows;
-    wCell = _wCell;
-    hCell = _hCell;
-    minBorderX = _minBorderX;
-    minBorderY = _minBorderY;
-    vector<int> vstat(nCols);
-    vStat.resize(nRows,vstat);
+    vStat[level].clear();
+    vector<int> vstat(nCols[level]);
+    vStat[level].resize(nRows[level],vstat);
+
+    computeMean();
 
     // 根据投影点选择提取特征区域
-    for (int i=0;i<vGFpoints.size();i++) {
-        int _col = vGFpoints[i].x;
-        int _row = vGFpoints[i].y;
-        int n_x = (_col - minBorderX) / wCell;
-        int n_y = (_row - minBorderY) / hCell;
-        if (n_x < 0 || n_y < 0 || n_x > nCols-1 || n_y > nRows-1) {
+    for (int i=0;i<vGFpoints[level].size();i++) {
+        int _col = vGFpoints[level][i].x;
+        int _row = vGFpoints[level][i].y;
+        int n_x = (_col - minBorderX[level]) / wCell[level];
+        int n_y = (_row - minBorderY[level]) / hCell[level];
+        if (n_x < 0 || n_y < 0 || n_x > nCols[level]-1 || n_y > nRows[level]-1) {
             continue;
         }
-        vStat[n_y][n_x]++;
+        vStat[level][n_y][n_x]++;
 
-        // 计算图像网格边缘点
-        float c_x = n_x * wCell + 0.5 * wCell + minBorderX; // 网格中心点
-        float c_y = n_y * hCell + 0.5 * hCell + minBorderY;
-        float _x = _col - c_x; // 投影点与网格中心点的偏差
-        float _y = _row - c_y;
-        if (_x > 0 && n_x + 1 < nCols) {
-            vStat[n_y][n_x + 1]++;
-        }
-        if (_x < 0 && n_x - 1 >= 0) {
-            vStat[n_y][n_x - 1]++;
-        }
-        if (_y > 0 && n_y + 1 < nRows) {
-            vStat[n_y+1][n_x]++;
-        }
-        if (_y < 0 && n_y - 1 >= 0) {
-            vStat[n_y-1][n_x]++;
-        }
-        if (_x > 0 && _y > 0 && n_x + 1 < nCols && n_y + 1 < nRows) {
-            vStat[n_y+1][n_x+1]++;
-        }
-        if (_x < 0 && _y > 0 && n_x - 1 >= 0 && n_y + 1 < nRows) {
-            vStat[n_y+1][n_x-1]++;
-        }
-        if (_x > 0 && _y < 0 && n_x + 1 < nCols && n_y - 1 >= 0) {
-            vStat[n_y-1][n_x+1]++;
-        }
-        if (_x < 0 && _y < 0 && n_x - 1 >= 0 && n_y - 1 >= 0) {
-            vStat[n_y-1][n_x-1]++;
-        }
+        // 添加网格边缘点
+        addCellEdge(n_x, n_y, _col, _row);
     }
+
+    // 添加图像边缘特征提取
     addEdge();
-    if (level == 0) {
-        nCols_origin = _nCols;
-        nRows_origin = _nRows;
-        wCell_origin = _wCell;
-        hCell_origin = _hCell;
-        minBorderX_origin = _minBorderX;
-        minBorderY_origin = _minBorderY;
-        vStat_origin.resize(vStat.size());
-        for (int i=0;i<vStat.size();i++) {
-            vStat_origin[i].assign(vStat[i].begin(), vStat[i].end());
+
+    // 添加特征提取区域的密度
+    addDensity();
+
+    return vStat_out[level];
+}
+
+// 计算均值及方差
+void Accelerate::computeMean() {
+    int num = vpDis[level].size();
+    Eigen::MatrixXd mMat(num,2);
+    for (int i=0;i<num;i++) {
+        mMat(i, 0) = vpDis[level][i].x;
+        mMat(i, 1) = vpDis[level][i].y;
+    }
+
+    // mean
+    Eigen::MatrixXd _center = mMat.colwise().mean();
+    float x0 = _center(0);
+    float y0 = _center(1);
+    pfCenter[level] = cvPoint2D32f(x0, y0);
+
+    // 方差
+    for (int i=0;i<num;i++) {
+        mMat(i, 0) -= _center(0);
+        mMat(i, 1) -= _center(1);
+        mMat(i, 0) *= mMat(i, 0);
+        mMat(i, 1) *= mMat(i, 1);
+    }
+    Eigen::MatrixXd disSum = mMat.colwise().sum();
+    disSum(0) = disSum(0) / (num - 1);
+    disSum(1) = disSum(1) / (num - 1);
+    fVariance[level] = disSum(0) + disSum(1);
+
+    fDistance[level] = sqrt(pow(pfCenter[level].x, 2) + pow(pfCenter[level].y, 2)) + fVariance[level];
+    if (fDistance[level] > nW) {
+        fDistance[level] = nW;
+    }
+}
+
+
+void Accelerate::addCellEdge(int n_x, int n_y, int _col, int _row) {
+    float c0_x = n_x * wCell[level] + minBorderX[level]; // 网格左上角
+    float c0_y = n_y * hCell[level] + minBorderY[level];
+    float c1_x = n_x * wCell[level] + wCell[level] + minBorderX[level]; // 网格右下角
+    float c1_y = n_y * hCell[level] + hCell[level] + minBorderY[level];
+
+    // 判断上下左右是否超出
+    for (int i=0;i<4;i++) {
+        int _x = _col + dis_parallel[i][0] * fDistance[level];
+        int _y = _row + dis_parallel[i][1] * fDistance[level];
+
+        if (_x > c1_x && n_x + 1 < nCols[level]) {
+            vStat[level][n_y][n_x + 1]++;
+        }
+        if (_x < c0_x && n_x - 1 >= 0) {
+            vStat[level][n_y][n_x - 1]++;
+        }
+        if (_y > c1_y && n_y + 1 < nRows[level]) {
+            vStat[level][n_y+1][n_x]++;
+        }
+        if (_y < c0_y && n_y - 1 >= 0) {
+            vStat[level][n_y-1][n_x]++;
         }
     }
-    return vStat;
+
+    // 判断斜方向的上下左右是否超出
+    for (int i=0;i<4;i++) {
+        int _x = _col + dis_tilted[i][0] * fDistance[level];
+        int _y = _row + dis_tilted[i][1] * fDistance[level];
+
+        if (_x > c1_x && _y > c1_y && n_x + 1 < nCols[level] && n_y + 1 < nRows[level]) {
+            vStat[level][n_y+1][n_x+1]++;
+        }
+        if (_x < c0_x && _y > c1_y && n_x - 1 >= 0 && n_y + 1 < nRows[level]) {
+            vStat[level][n_y+1][n_x-1]++;
+        }
+        if (_x > c1_x && _y < c0_y && n_x + 1 < nCols[level] && n_y - 1 >= 0) {
+            vStat[level][n_y-1][n_x+1]++;
+        }
+        if (_x < c0_x && _y < c0_y && n_x - 1 >= 0 && n_y - 1 >= 0) {
+            vStat[level][n_y-1][n_x-1]++;
+        }
+    }
 }
 
 void Accelerate::addEdge() {
-    int col = 0;
-    int row = 0;
-    if (pMove.x > 1) {
-        col = ceil(pMove.x / 35);
-        if (col > 0) {
-            for (int c=0;c<col;c++) {
-                for (int i=0;i<nRows;i++) {
-                    vStat[i][c]++;
-                }
+    int _move = 0;
+    if (pMove[level].x > 1) {
+        _move = ceil(pMove[level].x/ nW);
+        for (int c=0;c<_move;c++) {
+            for (int i=0;i<nRows[level];i++) {
+                vStat[level][i][c]++;
             }
         }
     }
-    else if (pMove.x < -1) {
-        col = ceil(-pMove.x / 35);
-        if (col > 0) {
-            for (int c=0;c<col;c++) {
-                for (int i=0;i<nRows;i++) {
-                    vStat[i][nCols-c-1]++;
-                }
+    else if (pMove[level].x < -1) {
+        _move = ceil(-pMove[level].x / nW);
+        for (int c=0;c<_move;c++) {
+            for (int i=0;i<nRows[level];i++) {
+                vStat[level][i][nCols[level]-c-1]++;
             }
         }
     }
-    if (pMove.y > 1) {
-        row = ceil(pMove.y / 35);
-        if (row > 0) {
-            for (int r=0;r<row;r++) {
-                for (int i=0;i<nCols;i++) {
-                    vStat[r][i]++;
-                }
+    if (pMove[level].y > 1) {
+        _move = ceil(pMove[level].y / nW);
+        for (int r=0;r<_move;r++) {
+            for (int i=0;i<nCols[level];i++) {
+                vStat[level][r][i]++;
             }
         }
     }
-    else if (pMove.y < -1) {
-        row = ceil(-pMove.y / 35);
-        if (row > 0) {
-            for (int r=0;r<row;r++) {
-                for (int i=0;i<nCols;i++) {
-                    vStat[nRows-r-1][i]++;
-                }
+    else if (pMove[level].y < -1) {
+        _move = ceil(-pMove[level].y / nW);
+        for (int r=0;r<_move;r++) {
+            for (int i=0;i<nCols[level];i++) {
+                vStat[level][nRows[level]-r-1][i]++;
             }
         }
     }
 }
 
-float Accelerate::getDensity() {
-    int nEar = 0;
-    if (level == 0) {
-        for (int r=0;r<nRows;r++) {
-            for (int i=0;i<nCols;i++) {
-                if (vStat[r][i] > 0) {
-                    nEar++;
-                }
+void Accelerate::addDensity() {
+    vStat_out[level].clear();
+    vStat_out[level].resize(vStat[level].size());
+    for (int i=0;i<vStat[level].size();i++) {
+        vStat_out[level][i].assign(vStat[level][i].begin(), vStat[level][i].end());
+    }
+
+    if (nNumber != 0) {
+        for (int r=0;r<vStat_out[level].size();r++) {
+            for (int c=0;c<vStat_out[level][r].size();c++) {
+                vStat_out[level][r][c] += vStat_pre[level][r][c];
             }
         }
-        density = float(nEar) / (nRows * nCols);
-
-        // mnFeaturesPerLevel.clear();
-        // mnFeaturesPerLevel.resize(nlevels);
-        // nfeatures = 1000; //300 + density * nfeatures;
-        // float factor = 1.0f / scaleFactor;
-        // float nDesiredFeaturesPerScale = nfeatures*(1 - factor)/(1 - (float)pow((double)factor, (double)nlevels));
-        // int sumFeatures = 0;
-        // for( int level = 0; level < nlevels-1; level++ )
-        // {
-        //     mnFeaturesPerLevel[level] = cvRound(nDesiredFeaturesPerScale);
-        //     sumFeatures += mnFeaturesPerLevel[level];
-        //     nDesiredFeaturesPerScale *= factor;
-        // }
-        // mnFeaturesPerLevel[nlevels-1] = std::max(nfeatures - sumFeatures, 0);
     }
-    return density;
+
+    int nEar = 0;
+    for (int r=0;r<nRows[level];r++) {
+        for (int i=0;i<nCols[level];i++) {
+            if (vStat_out[level][r][i] > 0) {
+                nEar++;
+            }
+        }
+    }
+    density[level] = float(nEar) / (nRows[level] * nCols[level]);
+
+    vStat_pre[level].clear();
+    vStat_pre[level].resize(vStat[level].size());
+    for (int i=0;i<vStat[level].size();i++) {
+        vStat_pre[level][i].assign(vStat[level][i].begin(), vStat[level][i].end());
+    }
+
 }
 
 void Accelerate::getAllKeypoints(vector<vector<KeyPoint> > allkeypoints){
@@ -235,9 +312,9 @@ void Accelerate::saveExtractor() {
     string numb = to_string(nNumber);
     string filename = "/home/kai/file/VO_SpeedUp/Dataset/feature_extractor/" + numb + ".png";
     // 投影特征点
-    for (int i=0;i<vGFpoints_origin.size()-1;i++) {
-        int x = vGFpoints_origin[i].x;
-        int y = vGFpoints_origin[i].y;
+    for (int i=0;i<vGFpoints[0].size()-1;i++) {
+        int x = vGFpoints[0][i].x;
+        int y = vGFpoints[0][i].y;
         circle(_images, cvPoint(x,y), 5, Scalar(0, 0, 255), 2, 4, 0);
     }
     // 提取特征点
@@ -247,13 +324,17 @@ void Accelerate::saveExtractor() {
         circle(_images, cvPoint(x,y), 5, Scalar(0, 255, 0), 2, 4, 0);
     }
     // 特征提取区域
-    for (int i=0;i<nRows_origin;i++) {
-        float iniY = minBorderY_origin + i * hCell_origin;
-        float maxY = iniY + hCell_origin;
-        for (int j=0;j<nCols_origin;j++) {
-            float iniX = minBorderX_origin + j * wCell_origin;
-            float maxX = iniX + wCell_origin;
-            if (vStat_origin[i][j] > 0) {
+    for (int i=0;i<nRows[0];i++) {
+        float iniY = minBorderY[0] + i * hCell[0];
+        float maxY = iniY + hCell[0];
+        if(maxY>maxBorderY[0])
+            maxY = maxBorderY[0];
+        for (int j=0;j<nCols[0];j++) {
+            float iniX = minBorderX[0] + j * wCell[0];
+            float maxX = iniX + wCell[0];
+            if(maxX>maxBorderX[0])
+                maxX = maxBorderX[0];
+            if (vStat_out[0][i][j] > 0) {
                 Point2f pt1;
                 Point2f pt2;
                 pt1.x = iniX;
@@ -264,14 +345,13 @@ void Accelerate::saveExtractor() {
             }
         }
     }
-    int dens = density * 100;
+    int dens = density[0] * 100;
     putText(_images, to_string(dens) + "%", cvPoint(0, 470), FONT_HERSHEY_SIMPLEX, 0.75, CV_RGB(255, 0, 0), 1);
     imwrite(filename, _images);
-    nNumber++;
 }
 
 void Accelerate::save2Ddis() {
-    Mat img(1000, 1000, CV_8UC1, Scalar(255,255,255));
+    Mat img(1000, 1000, CV_8UC3, Scalar(255,255,255));
 
     string numb = to_string(nNumber);
     string filename = "/home/kai/file/VO_SpeedUp/Dataset/feature_projectDis/" + numb + ".png";
@@ -281,52 +361,54 @@ void Accelerate::save2Ddis() {
 
     // X 轴正向
     line(img, Point(550, 500), Point(550, 490), Scalar(0, 0, 0), 2);
-    putText(img, "2", cvPoint(545, 525), FONT_HERSHEY_SIMPLEX, 0.5, CV_RGB(255, 0, 0), 1);
+    putText(img, "1", cvPoint(545, 525), FONT_HERSHEY_SIMPLEX, 0.5, CV_RGB(0, 0, 0), 1);
     line(img, Point(600, 500), Point(600, 490), Scalar(0, 0, 0), 2);
-    putText(img, "4", cvPoint(595, 525), FONT_HERSHEY_SIMPLEX, 0.5, CV_RGB(255, 0, 0), 1);
+    putText(img, "2", cvPoint(595, 525), FONT_HERSHEY_SIMPLEX, 0.5, CV_RGB(0, 0, 0), 1);
     line(img, Point(650, 500), Point(650, 490), Scalar(0, 0, 0), 2);
-    putText(img, "6", cvPoint(645, 525), FONT_HERSHEY_SIMPLEX, 0.5, CV_RGB(255, 0, 0), 1);
+    putText(img, "3", cvPoint(645, 525), FONT_HERSHEY_SIMPLEX, 0.5, CV_RGB(0, 0, 0), 1);
     line(img, Point(700, 500), Point(700, 490), Scalar(0, 0, 0), 2);
-    putText(img, "8", cvPoint(695, 525), FONT_HERSHEY_SIMPLEX, 0.5, CV_RGB(255, 0, 0), 1);
+    putText(img, "4", cvPoint(695, 525), FONT_HERSHEY_SIMPLEX, 0.5, CV_RGB(0, 0, 0), 1);
     line(img, Point(750, 500), Point(750, 490), Scalar(0, 0, 0), 2);
-    putText(img, "10", cvPoint(740, 525), FONT_HERSHEY_SIMPLEX, 0.5, CV_RGB(255, 0, 0), 1);
+    putText(img, "5", cvPoint(745, 525), FONT_HERSHEY_SIMPLEX, 0.5, CV_RGB(0, 0, 0), 1);
     line(img, Point(800, 500), Point(800, 490), Scalar(0, 0, 0), 2);
-    putText(img, "12", cvPoint(790, 525), FONT_HERSHEY_SIMPLEX, 0.5, CV_RGB(255, 0, 0), 1);
+    putText(img, "6", cvPoint(795, 525), FONT_HERSHEY_SIMPLEX, 0.5, CV_RGB(0, 0, 0), 1);
     line(img, Point(850, 500), Point(850, 490), Scalar(0, 0, 0), 2);
-    putText(img, "14", cvPoint(840, 525), FONT_HERSHEY_SIMPLEX, 0.5, CV_RGB(255, 0, 0), 1);
+    putText(img, "7", cvPoint(845, 525), FONT_HERSHEY_SIMPLEX, 0.5, CV_RGB(0, 0, 0), 1);
     line(img, Point(900, 500), Point(900, 490), Scalar(0, 0, 0), 2);
-    putText(img, "16", cvPoint(890, 525), FONT_HERSHEY_SIMPLEX, 0.5, CV_RGB(255, 0, 0), 1);
+    putText(img, "8", cvPoint(895, 525), FONT_HERSHEY_SIMPLEX, 0.5, CV_RGB(0, 0, 0), 1);
     line(img, Point(950, 500), Point(950, 490), Scalar(0, 0, 0), 2);
-    putText(img, "18", cvPoint(940, 525), FONT_HERSHEY_SIMPLEX, 0.5, CV_RGB(255, 0, 0), 1);
+    putText(img, "9", cvPoint(945, 525), FONT_HERSHEY_SIMPLEX, 0.5, CV_RGB(0, 0, 0), 1);
 
     // X 轴负向
     line(img, Point(450, 500), Point(450, 490), Scalar(0, 0, 0), 2);
-    putText(img, "-2", cvPoint(440, 525), FONT_HERSHEY_SIMPLEX, 0.5, CV_RGB(255, 0, 0), 1);
+    putText(img, "-1", cvPoint(440, 525), FONT_HERSHEY_SIMPLEX, 0.5, CV_RGB(0, 0, 0), 1);
     line(img, Point(400, 500), Point(400, 490), Scalar(0, 0, 0), 2);
-    putText(img, "-4", cvPoint(390, 525), FONT_HERSHEY_SIMPLEX, 0.5, CV_RGB(255, 0, 0), 1);
+    putText(img, "-2", cvPoint(390, 525), FONT_HERSHEY_SIMPLEX, 0.5, CV_RGB(0, 0, 0), 1);
     line(img, Point(350, 500), Point(350, 490), Scalar(0, 0, 0), 2);
-    putText(img, "-6", cvPoint(340, 525), FONT_HERSHEY_SIMPLEX, 0.5, CV_RGB(255, 0, 0), 1);
+    putText(img, "-3", cvPoint(340, 525), FONT_HERSHEY_SIMPLEX, 0.5, CV_RGB(0, 0, 0), 1);
     line(img, Point(300, 500), Point(300, 490), Scalar(0, 0, 0), 2);
-    putText(img, "-8", cvPoint(290, 525), FONT_HERSHEY_SIMPLEX, 0.5, CV_RGB(255, 0, 0), 1);
+    putText(img, "-4", cvPoint(290, 525), FONT_HERSHEY_SIMPLEX, 0.5, CV_RGB(0, 0, 0), 1);
     line(img, Point(250, 500), Point(250, 490), Scalar(0, 0, 0), 2);
-    putText(img, "-10", cvPoint(235, 525), FONT_HERSHEY_SIMPLEX, 0.5, CV_RGB(255, 0, 0), 1);
+    putText(img, "-5", cvPoint(240, 525), FONT_HERSHEY_SIMPLEX, 0.5, CV_RGB(0, 0, 0), 1);
     line(img, Point(200, 500), Point(200, 490), Scalar(0, 0, 0), 2);
-    putText(img, "-12", cvPoint(185, 525), FONT_HERSHEY_SIMPLEX, 0.5, CV_RGB(255, 0, 0), 1);
+    putText(img, "-6", cvPoint(190, 525), FONT_HERSHEY_SIMPLEX, 0.5, CV_RGB(0, 0, 0), 1);
     line(img, Point(150, 500), Point(150, 490), Scalar(0, 0, 0), 2);
-    putText(img, "-14", cvPoint(135, 525), FONT_HERSHEY_SIMPLEX, 0.5, CV_RGB(255, 0, 0), 1);
+    putText(img, "-7", cvPoint(140, 525), FONT_HERSHEY_SIMPLEX, 0.5, CV_RGB(0, 0, 0), 1);
     line(img, Point(100, 500), Point(100, 490), Scalar(0, 0, 0), 2);
-    putText(img, "-16", cvPoint(85, 525), FONT_HERSHEY_SIMPLEX, 0.5, CV_RGB(255, 0, 0), 1);
+    putText(img, "-8", cvPoint(90, 525), FONT_HERSHEY_SIMPLEX, 0.5, CV_RGB(0, 0, 0), 1);
     line(img, Point(50, 500), Point(50, 490), Scalar(0, 0, 0), 2);
-    putText(img, "-18", cvPoint(35, 525), FONT_HERSHEY_SIMPLEX, 0.5, CV_RGB(255, 0, 0), 1);
+    putText(img, "-9", cvPoint(40, 525), FONT_HERSHEY_SIMPLEX, 0.5, CV_RGB(0, 0, 0), 1);
 
-    for (int i=0;i<vpDis.size();i++) {
-        int x = vpDis[i].x * 25 + 500;
-        int y = vpDis[i].y * 25 + 500;
-        circle(img, cvPoint(x,y), 5, Scalar(0, 255, 0), 2, 4, 0);
+    int num = vpDis[0].size();
+    for (int i=0;i<num;i++) {
+        int x = vpDis[0][i].x * 50 + 500;
+        int y = vpDis[0][i].y * 50 + 500;
+        circle(img, cvPoint(x,y), 3, Scalar(0, 255, 0), 2, 4, 0);
     }
 
+    circle(img, cvPoint(500, 500), fDistance[0]*50, Scalar(0, 0, 255), 2, 4, 0);
+
     imwrite(filename, img);
-    nNumber++;
 }
 
 }   //namespace ORB_SLAM
