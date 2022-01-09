@@ -265,18 +265,18 @@ public:
 
     void predictPWLSVec(const double & dt, const size_t & num_seg_pred) {
 
-        arma::rowvec curXv = this->Xv;
+        arma::rowvec curXv = this->Xv;   // 上一帧状态
 
         // iteratively propagating the PWLS state and estimating system matrix accordingy
         kinematic.clear();
         for (size_t i=0; i<num_seg_pred; ++i) {
 
             KineStruct tmpKine;
-            tmpKine.dt = float(dt);
+            tmpKine.dt = float(dt);      // 时间差
             tmpKine.dt_inSeg = tmpKine.dt / float(13);
             tmpKine.Xv = curXv;
 
-            convert_PWLS_Vec_To_Homo(tmpKine.Xv, tmpKine.Tcw);
+            convert_PWLS_Vec_To_Homo(tmpKine.Xv, tmpKine.Tcw);  // 从上一帧状态中，保存出反向变换矩阵
             // compute F block for full segment kinematic
             compute_F_subblock(tmpKine.Xv, tmpKine.dt_inSeg, tmpKine.F_Q_inSeg, tmpKine.F_Omg_inSeg);
             // assemble into full F matrix for current segment
@@ -676,7 +676,7 @@ public:
 
     //
     Frame * pFrame;
-    arma::rowvec Xv, Xv_rel;
+    arma::rowvec Xv, Xv_rel;   // Xv = [0-2](平移矩阵) + [3-6](旋转四元素) + [7-9](平移速度) + [10-12](旋转速度)
     arma::mat Twc, Tcw_prev;
     //    arma::mat Twr, Qwr, tVel, rVel;
     //    size_t measPerSeg;

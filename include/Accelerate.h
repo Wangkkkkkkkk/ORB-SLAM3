@@ -21,7 +21,7 @@ class Accelerate
 {
 public:
 
-    Accelerate(int _nlevels);
+    Accelerate(int _nlevels, float _factor);
 
     ~Accelerate(){}
 
@@ -34,11 +34,13 @@ public:
     void addCellEdge(int n_x, int n_y, int _col, int _row);
     void addDensity();
     void addEdge();
-    void getAllKeypoints(vector<vector<KeyPoint> > allkeypoints);
-    void saveExtractor();
+    Point2f computeMove();
+    void saveExtractor(vector<vector<KeyPoint> > allkeypoints);
     void save2Ddis();
 
-    int nlevels;
+    int nlevels;      // 金字塔总层数
+    float factor;     // 缩放因子 1.2
+
     Mat mImages;                 // 当前图像帧
 
     Mat mPredictTcw_last;         // 上一帧预测的相机变换矩阵
@@ -61,7 +63,8 @@ public:
     vector<int> maxBorderX;
     vector<int> maxBorderY;
 
-    vector<Point2f> pMove;                   // 像素移动方向
+    vector<vector<Point2f> > pMoves;                   // 所有像素移动方向
+    vector<Point2f> pMove;
 
     vector<vector<Point2f> > vpDis;         // 恒速模型投影误差
     vector<Point2f> pfCenter;                // 误差均值
@@ -70,14 +73,12 @@ public:
 
     vector<float> density;                 // 提取特征区域密度
 
-    vector<vector<KeyPoint> > vAllkeypoints;  // 提取的所有特征点
-
     int nNumber;                     // 调试用，保存帧数
 
     int dis_parallel[4][2];
     int dis_tilted[4][2];
 
-    
+    vector<int> vfResponses;
 
 };
 

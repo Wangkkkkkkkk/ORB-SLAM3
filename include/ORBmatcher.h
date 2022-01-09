@@ -163,6 +163,7 @@ public:
             if (bestLevel == bestLevel2 && bestDist > mfNNratio * bestDist2)
                 return -1;
 
+            pMP->response = F.mvKeysUn[bestIdx].response;  // 特征点响应值保存到地图点
             F.mvpMapPoints[bestIdx] = pMP;
             // store the match score for each frame-to-map match
             F.mvpMatchScore[bestIdx] = bestDist;

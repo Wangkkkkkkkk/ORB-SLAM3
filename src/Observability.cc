@@ -596,7 +596,7 @@ void Observability::batchInfoMat_Map(const size_t start_idx, const size_t end_id
                 continue ;
 
             // Feature position
-            arma::rowvec Y = arma::zeros<arma::rowvec>(3);
+            arma::rowvec Y = arma::zeros<arma::rowvec>(3);  // 点的世界坐标
             cv::Mat featPos = pMP->GetWorldPos();
             Y[0] = featPos.at<float>(0);
             Y[1] = featPos.at<float>(1);
@@ -853,6 +853,7 @@ int Observability::runActiveMapMatching(Frame *pFrame,
 
     // iteratively search for the most informative lmk
     arma::mat curMat = mBaseInfoMat;
+    double responses = 0;
     arma::mat H_disp;
     int thStereo = (ORBmatcher::TH_HIGH+ORBmatcher::TH_LOW)/2;
     double curCost = 0;
@@ -904,7 +905,8 @@ int Observability::runActiveMapMatching(Frame *pFrame,
         //    for (size_t i=0; i<num_to_match; ++i) {
         //        int maxLmk = -1;
         //        double maxDet = -DBL_MAX;
-        std::priority_queue<SimplePoint> heapSubset;
+        std::unordered_map<int, pair<double, double>> heapSubset;
+
         std::vector<size_t> removeIdx;
 #ifdef OBS_DEBUG_VERBOSE
         std::cout << "func matchMapPointActive: matching round " << nMatched << std::endl;
@@ -915,6 +917,7 @@ int Observability::runActiveMapMatching(Frame *pFrame,
             szActualSubset = lmkIdx.n_cols;
         //
         //        std::srand(std::time(nullptr));
+        // cout<< "----- find GF -----" <<endl;
         while (numHit < szActualSubset) {   // 集合数少于随机子集，继续
             // generate random query index
 #ifdef OBS_DEBUG_VERBOSE
@@ -950,29 +953,61 @@ int Observability::runActiveMapMatching(Frame *pFrame,
             // else, the queried map point is updated in time, and being assessed with potential info gain
             if (size(mMapPoints->at(queIdx)->ObsMat)[0] != 7) {continue;}  // 可能存在 ObsMat 不存在，加一个判断
             double curDet = logDet( curMat + mMapPoints->at(queIdx)->ObsMat );
-            double response = mMapPoints->at(queIdx)->response;
-            // cout<< "curDet = " << curDet << " response = " << response <<endl;
-            // curDet += response;
-#ifdef INFORMATION_EFFICIENCY_SCORE
-            heapSubset.push(SimplePoint(queIdx, curDet / double(curCost + mMapPoints->at(queIdx)->mvMatchCandidates.size())));
-#else
-            heapSubset.push(SimplePoint(queIdx, curDet));
-#endif
+            double response = mMapPoints->at(queIdx)->response + responses;
+            // cout<< "nIdx:" << queIdx << " curDet:" << curDet << " response:" << response <<endl;
+
+// #ifdef INFORMATION_EFFICIENCY_SCORE
+//             heapSubset.push(SimplePoint(queIdx, curDet / double(curCost + mMapPoints->at(queIdx)->mvMatchCandidates.size())));
+// #else
+//             heapSubset.push(SimplePoint(queIdx, curDet));
+// #endif
+
+            std::pair<double, double> p(curDet, response);
+            heapSubset.emplace(queIdx, p);
 
             if (numHit >= szActualSubset) {
                 // once filled the heap with random samples
                 // start matching the one with highest logdet / info gain
-                SimplePoint heapTop = heapSubset.top();
+                // SimplePoint heapTop = heapSubset.top();
+
+                double curDet_min = 10000;
+                double curDet_max = -10000;
+                double response_min = 10000;
+                double response_max = -10000;
+                for (auto Subset:heapSubset) {
+                    double _curDet = Subset.second.first;
+                    double _response = Subset.second.second;
+                    if (_curDet > curDet_max) {curDet_max = _curDet;}
+                    if (_curDet < curDet_min) {curDet_min = _curDet;}
+                    if (_response > response_max) {response_max = _response;}
+                    if (_response < response_min) {response_min = _response;}
+                }
+                double curDet_diff = curDet_max - curDet_min;
+                double response_diff = max(response_max - response_min, 1.0);
+
+                int nIdx = -1;
+                double result = -1;
+                for (auto Subset:heapSubset) {
+                    double _curDet = Subset.second.first;
+                    double _response = Subset.second.second;
+                    double _result = 0.6 * (_curDet - curDet_min) / curDet_diff + 0.4 * (_response - response_min) / response_diff;
+                    // cout<< "nIdx:" << Subset.first << " curDet bi:" << (_curDet - curDet_min) / curDet_diff << " response bi:" << (_response - response_min) / response_diff <<endl;
+                    if (_result > result) {
+                        result = _result;
+                        nIdx = Subset.first;
+                    }
+                }
+                // cout<< "find nIdx:" << nIdx << " curDet:" << heapSubset[nIdx].first << " response:" << heapSubset[nIdx].second <<endl;
                 // cout<< "heapTop = " << heapTop.score <<endl;
 #ifdef OBS_DEBUG_VERBOSE
                 cout << "heapTop logDet = " << heapTop.score << endl;
 #endif
 
 #ifdef INFORMATION_EFFICIENCY_SCORE
-                int bestIdx = mORBMatcher.MatchCandidates(*pFrame, mMapPoints->at(heapTop.idx));
-                curCost += mMapPoints->at(heapTop.idx)->mvMatchCandidates.size();
+                int bestIdx = mORBMatcher.MatchCandidates(*pFrame, mMapPoints->at(nIdx));
+                curCost += mMapPoints->at(nIdx)->mvMatchCandidates.size();
 #else
-                int bestIdx = mORBMatcher.SearchByProjection_OnePoint(*pFrame, mMapPoints->at(heapTop.idx), th);
+                int bestIdx = mORBMatcher.SearchByProjection_OnePoint(*pFrame, mMapPoints->at(nIdx), th);
 #endif
                 if (bestIdx >= 0) {
                     //                    std::cout << "Found match " << heapSubset.top().idx << std::endl;
@@ -982,7 +1017,7 @@ int Observability::runActiveMapMatching(Frame *pFrame,
                     if (mSensor == 1) {
 #ifdef DELAYED_STEREO_MATCHING
                         //
-                        cv::Mat Pw = mMapPoints->at(heapTop.idx)->GetWorldPos(), Pc;
+                        cv::Mat Pw = mMapPoints->at(nIdx)->GetWorldPos(), Pc;
                         //                        cout << "Pw = " << Pw.at<float>(0) << ", " << Pw.at<float>(1) << ", " << Pw.at<float>(2) << endl;
                         if (pFrame->WorldToCameraPoint(Pw, Pc) == true) {
                             //                            cout << "Pc = " << Pc.at<float>(0) << ", " << Pc.at<float>(1) << ", " << Pc.at<float>(2) << endl;
@@ -996,14 +1031,14 @@ int Observability::runActiveMapMatching(Frame *pFrame,
                                 // grab the info term from right cam stereo match
                                 // feature position
                                 arma::rowvec Y = arma::zeros<arma::rowvec>(3);
-                                cv::Mat featPos = mMapPoints->at(heapTop.idx)->GetWorldPos();
+                                cv::Mat featPos = mMapPoints->at(nIdx)->GetWorldPos();
                                 Y[0] = featPos.at<float>(0);
                                 Y[1] = featPos.at<float>(1);
                                 Y[2] = featPos.at<float>(2);
                                 // add the disparity info term to curMat
                                 compute_H_disparity_col (this->kinematic[this->mKineIdx].Xv, Y, H_disp);
                                 //                        curMat = curMat + H_disp.t() * H_disp;
-                                mMapPoints->at(heapTop.idx)->H_meas = arma::join_vert(mMapPoints->at(heapTop.idx)->H_meas, H_disp);
+                                mMapPoints->at(nIdx)->H_meas = arma::join_vert(mMapPoints->at(nIdx)->H_meas, H_disp);
 
                                 nMatched += 1;
                             }
@@ -1012,13 +1047,13 @@ int Observability::runActiveMapMatching(Frame *pFrame,
                         // grab the info term from right cam stereo match feature position
                         if (pFrame->mvDepth[bestIdx] >= 0) {
                             arma::rowvec Y = arma::zeros<arma::rowvec>(3);
-                            cv::Mat featPos = mMapPoints->at(heapTop.idx)->GetWorldPos();
+                            cv::Mat featPos = mMapPoints->at(nIdx)->GetWorldPos();
                             Y[0] = featPos.at<float>(0);
                             Y[1] = featPos.at<float>(1);
                             Y[2] = featPos.at<float>(2);
                             // add the disparity info term to curMat
                             compute_H_disparity_col (this->kinematic[this->mKineIdx].Xv, Y, H_disp);
-                            mMapPoints->at(heapTop.idx)->H_meas = arma::join_vert(mMapPoints->at(heapTop.idx)->H_meas, H_disp);
+                            mMapPoints->at(nIdx)->H_meas = arma::join_vert(mMapPoints->at(nIdx)->H_meas, H_disp);
 
                             nMatched += 1;
                         }
@@ -1028,13 +1063,13 @@ int Observability::runActiveMapMatching(Frame *pFrame,
                         // grab the info term from depth cam
                         if (pFrame->mvDepth[bestIdx] >= 0) {
                             arma::rowvec Y = arma::zeros<arma::rowvec>(3);
-                            cv::Mat featPos = mMapPoints->at(heapTop.idx)->GetWorldPos();
+                            cv::Mat featPos = mMapPoints->at(nIdx)->GetWorldPos();
                             Y[0] = featPos.at<float>(0);
                             Y[1] = featPos.at<float>(1);
                             Y[2] = featPos.at<float>(2);
                             // add the disparity info term to curMat
                             compute_H_disparity_col (this->kinematic[this->mKineIdx].Xv, Y, H_disp);
-                            mMapPoints->at(heapTop.idx)->H_meas = arma::join_vert(mMapPoints->at(heapTop.idx)->H_meas, H_disp);
+                            mMapPoints->at(nIdx)->H_meas = arma::join_vert(mMapPoints->at(nIdx)->H_meas, H_disp);
 
                             nMatched += 1;
                         }
@@ -1042,38 +1077,40 @@ int Observability::runActiveMapMatching(Frame *pFrame,
 
                     // TODO
                     // update the info matrix with measurement info, e.g. ocl level, residual
-                    float res_u = pFrame->mvKeysUn[bestIdx].pt.x - mMapPoints->at(heapTop.idx)->u_proj,
-                            res_v = pFrame->mvKeysUn[bestIdx].pt.y - mMapPoints->at(heapTop.idx)->v_proj;
+                    float res_u = pFrame->mvKeysUn[bestIdx].pt.x - mMapPoints->at(nIdx)->u_proj,
+                            res_v = pFrame->mvKeysUn[bestIdx].pt.y - mMapPoints->at(nIdx)->v_proj;
                     //                    pFrame->getProjectError(pFrame->mvpMapPoints[bestIdx], &(pFrame->mvKeysUn[bestIdx]), res_u, res_v);
 
                     arma::mat H_rw;
-                    reWeightInfoMat( pFrame, bestIdx, mMapPoints->at(heapTop.idx),
-                                     mMapPoints->at(heapTop.idx)->H_meas, res_u, res_v,
-                                     mMapPoints->at(heapTop.idx)->H_proj, H_rw );
+                    reWeightInfoMat( pFrame, bestIdx, mMapPoints->at(nIdx),
+                                     mMapPoints->at(nIdx)->H_meas, res_u, res_v,
+                                     mMapPoints->at(nIdx)->H_proj, H_rw );
                     //                    std::cout << "H_rw = "  << H_rw << std::endl;
 
                     if (mat_type == ORB_SLAM3::FRAME_HYBRID_MATRIX || mat_type == ORB_SLAM3::MAP_HYBRID_MATRIX) {
                         //
                         arma::mat Hyb = arma::join_vert(H_rw, H_rw * this->kinematic[this->mKineIdx].F);
                         curMat = curMat + Hyb.t() * Hyb;
+                        responses = heapSubset[nIdx].second;
                     }
                     else if (mat_type == ORB_SLAM3::FRAME_INFO_MATRIX || mat_type == ORB_SLAM3::MAP_INFO_MATRIX) {
                         //
                         curMat = curMat + H_rw.t() * H_rw;
+                        responses = heapSubset[nIdx].second;
                     }
                     else {
                         // TODO
                     }
 
-                    removeIdx.push_back(heapTop.idx);
+                    removeIdx.push_back(nIdx);
                     nMatched += 2;
                     break ;
                 }
                 else {
                     // otherwise, remove the top one from map points, and re-sample a map points
                     //                    std::cout << "Failed to match " << heapSubset.top().idx << std::endl;
-                    removeIdx.push_back(heapTop.idx);
-                    heapSubset.pop();
+                    removeIdx.push_back(nIdx);
+                    auto _n = heapSubset.erase(nIdx);
                     -- numHit;
                 }
             }
@@ -1162,7 +1199,7 @@ int Observability::runActiveMapMatching(Frame *pFrame,
     for (size_t i=0; i<lmkIdx.n_cols; ++i) {
         mLeftMapPoints.push_back(mMapPoints->at(lmkIdx.at(0, i)));
     }
-
+    // cout<< "find GF points end" <<endl;
     //    std::cout << "func matchMapPointActive: done with " << num_to_match << " iterations!" << std::endl;
     return nMatched;
 

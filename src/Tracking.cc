@@ -5093,7 +5093,7 @@ int Tracking::SearchLocalPointsByGF()
 
     mCurrentInfoMat = arma::eye( size(mCurrentInfoMat) ) * 0.00001;
 
-    if (mFrameAfterInital > camera_fps * 3 && mCurrentFrame.mnId >= mnLastRelocFrameId+2) {
+    if (mFrameAfterInital > camera_fps * 5 && mCurrentFrame.mnId >= mnLastRelocFrameId+2) {
         //    cout << "update pose info in obs class" << endl;
         // NOTE
         // there is no need to do motion prediction again, since it's already be

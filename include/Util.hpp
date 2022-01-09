@@ -956,19 +956,19 @@ inline void solveMaxSVD(const arma::mat & SOM, arma::colvec & u, double & s, arm
 }
 
 
-
+// 计算 F_Q 和 F_Omg 矩阵
 inline void compute_F_subblock(const arma::rowvec & Xv, const double & dt, arma::mat & F_Q, arma::mat & F_Omg) {
     //-----------------------------------------------------------------------------
     // Compute F
     //std::cout << "[OBS_COMPUTOR]  Get F" << std::endl;
-    arma::rowvec omegaOld = Xv.subvec(10, 12);
-    arma::rowvec qOld = Xv.subvec(3, 6);
+    arma::rowvec omegaOld = Xv.subvec(10, 12);   // Xv[10-12] = omegaOld
+    arma::rowvec qOld = Xv.subvec(3, 6);         // Xv[3-6] = qOld，旋转四元素
     arma::rowvec v = omegaOld * dt;
-    double theta = arma::norm(v, 2);
+    double theta = arma::norm(v, 2);  // 求矩阵L2范数，常常被用来度量某个向量空间（或矩阵）中的每个向量的长度或大小，L2范数即表示向量x的各元素平方和后再开方，表示角度
     arma::rowvec q;
     //    cout << "v = " << v << endl;
 
-    if(theta < 1e-6) {
+    if(theta < 1e-6) {   // 角度过小，直接置为0
         //        q << 1 << 0 << 0 << 0 << arma::endr;
         q = {1, 0, 0, 0};
     } else {
@@ -990,7 +990,7 @@ inline void compute_F_subblock(const arma::rowvec & Xv, const double & dt, arma:
     //         << X << R  <<  Z << -Y << arma::endr
     //         << Y << -Z <<  R <<  X << arma::endr
     //         << Z <<  Y << -X <<  R << arma::endr;
-    F_Q = { {R, -X, -Y, -Z}, {X, R, Z, -Y}, {Y, -Z, R, X}, {Z, Y, -X, R} };
+    F_Q = { {R, -X, -Y, -Z}, {X, R, Z, -Y}, {Y, -Z, R, X}, {Z, Y, -X, R} };  // 四元素的一种形式
 
     //    cout << "F_Q = " << F_Q << endl;
 
@@ -1001,7 +1001,7 @@ inline void compute_F_subblock(const arma::rowvec & Xv, const double & dt, arma:
     //               << X <<  R << -Z <<  Y << arma::endr
     //               << Y <<  Z <<  R << -X << arma::endr
     //               << Z << -Y <<  X <<  R << arma::endr;
-    dq3_by_dq1 = { {R, -X, -Y, -Z}, {X, R, -Z, Y}, {Y, Z, R, -X}, {Z, -Y, X, R} };
+    dq3_by_dq1 = { {R, -X, -Y, -Z}, {X, R, -Z, Y}, {Y, Z, R, -X}, {Z, -Y, X, R} };  // old四元素
 
     //    cout << "dq3_by_dq1 = " << dq3_by_dq1 << endl;
     //    cout << "omegaOld = " << omegaOld << endl;
@@ -1055,24 +1055,24 @@ inline void compute_F_subblock(const arma::rowvec & Xv, const double & dt, arma:
 
 inline void convert_PWLS_Vec_To_Homo(const arma::rowvec & pwlsVec, cv::Mat & Tcw) {
 
-    cv::Mat Rwc(3, 3, CV_32F);
-    cv::Mat twc(3, 1, CV_32F);
+    cv::Mat Rwc(3, 3, CV_32F);   // 旋转矩阵
+    cv::Mat twc(3, 1, CV_32F);   // 平移矩阵
     //    cout << pwlsVec << endl;
 
     // translation
-    twc.at<float>(0, 0) = pwlsVec[0];
+    twc.at<float>(0, 0) = pwlsVec[0];  // pwlsVec[0-2] 平移矩阵[0-2]
     twc.at<float>(1, 0) = pwlsVec[1];
     twc.at<float>(2, 0) = pwlsVec[2];
     //    cout << twc << endl;
 
     // quaternion
-    QUAT2DCM_float(pwlsVec.subvec(3, 6), Rwc);
+    QUAT2DCM_float(pwlsVec.subvec(3, 6), Rwc);  // pwlsVec[3-6] 是四元素，表示旋转，这里从四元素转到旋转矩阵
     //    cout << Rwc << endl;
 
     //
     Tcw = cv::Mat::eye(4, 4, CV_32F);
     Tcw.rowRange(0,3).colRange(0,3) = Rwc.t();
-    Tcw.rowRange(0,3).col(3) = -Rwc.t() * twc;
+    Tcw.rowRange(0,3).col(3) = -Rwc.t() * twc;  // 旋转矩阵 + 平移矩阵 = 变换矩阵，这里是反向变化矩阵
 
     //    std::cout << "func convert_PWLS_Vec_To_Homo: Tcw = " << Tcw << std::endl;
 }

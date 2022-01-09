@@ -15,8 +15,8 @@ using namespace cv;
 namespace ORB_SLAM3
 {
 
-Accelerate::Accelerate(int _nlevels):
-    nlevels(_nlevels)
+Accelerate::Accelerate(int _nlevels, float _factor):
+    nlevels(_nlevels), factor(_factor)
 {
     nNumber = -1;
 
@@ -33,6 +33,7 @@ Accelerate::Accelerate(int _nlevels):
     maxBorderX.resize(nlevels);
     maxBorderY.resize(nlevels);
 
+    pMoves.resize(nlevels);
     pMove.resize(nlevels);
 
     vpDis.resize(nlevels);
@@ -70,9 +71,10 @@ void Accelerate::getPreframe(Frame* mPreframe) {
     Mat Rcw_prelast = mPredictTcw_last.rowRange(0,3).colRange(0,3);
     Mat tcw_prelast = mPredictTcw_last.rowRange(0,3).col(3);
 
-    int GFpoint_number = 0;
     vGFpoints[0].clear();
+    vfResponses.clear();
     vpDis[0].clear();
+    pMoves[0].clear();
     for(int i=0; i<mPreframe->N; i++)
     {
         if(mPreframe->mvpMapPoints[i])
@@ -95,16 +97,15 @@ void Accelerate::getPreframe(Frame* mPreframe) {
                     cv::Point2f uv_pre = mPreframe->mpCamera->project(x3Dc_pre);
 
                     vGFpoints[0].push_back(px);
+                    vfResponses.push_back(mPreframe->mvpMapPoints[i]->response);
                     vpDis[0].push_back(uv - uv_pre);
-                    // 像素总的移动方向
-                    pMove[0] += px - uv;
-                    GFpoint_number++;
+
+                    // 像素的移动方向，上一帧像素坐标 - 预测帧像素坐标
+                    pMoves[0].push_back(uv - px);
                 }
             }
         }
     }
-    // 得到像素平均移动方向
-    pMove[0] = pMove[0] / GFpoint_number;
 }
 
 vector<vector<int> > Accelerate::buildStat(int _nCols, int _nRows, int _wCell, int _hCell,
@@ -153,34 +154,41 @@ vector<vector<int> > Accelerate::buildStat(int _nCols, int _nRows, int _wCell, i
 
 // 计算均值及方差
 void Accelerate::computeMean() {
-    int num = vpDis[level].size();
-    Eigen::MatrixXd mMat(num,2);
-    for (int i=0;i<num;i++) {
-        mMat(i, 0) = vpDis[level][i].x;
-        mMat(i, 1) = vpDis[level][i].y;
+    if (level == 0) {
+        int num = vpDis[level].size();
+        Eigen::MatrixXd mMat(num,2);
+        for (int i=0;i<num;i++) {
+            mMat(i, 0) = vpDis[level][i].x;
+            mMat(i, 1) = vpDis[level][i].y;
+        }
+
+        // mean
+        Eigen::MatrixXd _center = mMat.colwise().mean();
+        float x0 = _center(0);
+        float y0 = _center(1);
+        pfCenter[level] = cvPoint2D32f(x0, y0);
+
+        // 方差
+        for (int i=0;i<num;i++) {
+            mMat(i, 0) -= _center(0);
+            mMat(i, 1) -= _center(1);
+            mMat(i, 0) *= mMat(i, 0);
+            mMat(i, 1) *= mMat(i, 1);
+        }
+        Eigen::MatrixXd disSum = mMat.colwise().sum();
+        disSum(0) = disSum(0) / (num - 1);
+        disSum(1) = disSum(1) / (num - 1);
+        fVariance[level] = disSum(0) + disSum(1);
+
+        fDistance[level] = sqrt(pow(pfCenter[level].x, 2) + pow(pfCenter[level].y, 2)) + fVariance[level];
+        if (fDistance[level] > nW) {
+            fDistance[level] = nW;
+        }
     }
-
-    // mean
-    Eigen::MatrixXd _center = mMat.colwise().mean();
-    float x0 = _center(0);
-    float y0 = _center(1);
-    pfCenter[level] = cvPoint2D32f(x0, y0);
-
-    // 方差
-    for (int i=0;i<num;i++) {
-        mMat(i, 0) -= _center(0);
-        mMat(i, 1) -= _center(1);
-        mMat(i, 0) *= mMat(i, 0);
-        mMat(i, 1) *= mMat(i, 1);
-    }
-    Eigen::MatrixXd disSum = mMat.colwise().sum();
-    disSum(0) = disSum(0) / (num - 1);
-    disSum(1) = disSum(1) / (num - 1);
-    fVariance[level] = disSum(0) + disSum(1);
-
-    fDistance[level] = sqrt(pow(pfCenter[level].x, 2) + pow(pfCenter[level].y, 2)) + fVariance[level];
-    if (fDistance[level] > nW) {
-        fDistance[level] = nW;
+    else {
+        pfCenter[level] = pfCenter[level-1] / factor;
+        fVariance[level] = fVariance[level-1] / factor;
+        fDistance[level] = fDistance[level-1] / factor;
     }
 }
 
@@ -231,33 +239,36 @@ void Accelerate::addCellEdge(int n_x, int n_y, int _col, int _row) {
 }
 
 void Accelerate::addEdge() {
+
+    Point2f move = computeMove();
+
     int _move = 0;
-    if (pMove[level].x > 1) {
-        _move = ceil(pMove[level].x/ nW);
+    if (move.x < -1) {
+        _move = ceil(-move.x/ nW);
         for (int c=0;c<_move;c++) {
             for (int i=0;i<nRows[level];i++) {
                 vStat[level][i][c]++;
             }
         }
     }
-    else if (pMove[level].x < -1) {
-        _move = ceil(-pMove[level].x / nW);
+    else if (move.x > 1) {
+        _move = ceil(move.x / nW);
         for (int c=0;c<_move;c++) {
             for (int i=0;i<nRows[level];i++) {
                 vStat[level][i][nCols[level]-c-1]++;
             }
         }
     }
-    if (pMove[level].y > 1) {
-        _move = ceil(pMove[level].y / nW);
+    if (move.y < -1) {
+        _move = ceil(-move.y / nW);
         for (int r=0;r<_move;r++) {
             for (int i=0;i<nCols[level];i++) {
                 vStat[level][r][i]++;
             }
         }
     }
-    else if (pMove[level].y < -1) {
-        _move = ceil(-pMove[level].y / nW);
+    else if (move.y > 1) {
+        _move = ceil(move.y / nW);
         for (int r=0;r<_move;r++) {
             for (int i=0;i<nCols[level];i++) {
                 vStat[level][nRows[level]-r-1][i]++;
@@ -299,28 +310,42 @@ void Accelerate::addDensity() {
 
 }
 
-void Accelerate::getAllKeypoints(vector<vector<KeyPoint> > allkeypoints){
-    vAllkeypoints.resize(allkeypoints.size());
-    for (int i=0;i<allkeypoints.size();i++) {
-        vAllkeypoints[i].assign(allkeypoints[i].begin(), allkeypoints[i].end());
+Point2f Accelerate::computeMove() {
+    if (level == 0) {
+        int num = pMoves[level].size();
+        Point2f _move = cvPoint(0, 0);
+        for (int i=0;i<pMoves[level].size();i++) {
+            _move += pMoves[level][i];
+        }
+        pMove[level] = _move / num;
+        return pMove[level];
+    }
+    else {
+        pMove[level] = pMove[level-1] / factor;
+        return pMove[level];
     }
 }
 
-void Accelerate::saveExtractor() {
+// save project points info and extractor points info
+void Accelerate::saveExtractor(vector<vector<KeyPoint> > allkeypoints) {
     Mat _images;
     cvtColor(mImages, _images, COLOR_GRAY2BGR);
     string numb = to_string(nNumber);
     string filename = "/home/kai/file/VO_SpeedUp/Dataset/feature_extractor/" + numb + ".png";
     // 投影特征点
-    for (int i=0;i<vGFpoints[0].size()-1;i++) {
+    for (int i=0;i<vGFpoints[0].size();i++) {
         int x = vGFpoints[0][i].x;
         int y = vGFpoints[0][i].y;
+        int response = vfResponses[i];
+        // putText(_images, to_string(response), cvPoint(x, y-10), FONT_HERSHEY_SIMPLEX, 0.5, CV_RGB(255, 0, 0), 1);
         circle(_images, cvPoint(x,y), 5, Scalar(0, 0, 255), 2, 4, 0);
     }
     // 提取特征点
-    for (int j=0;j<vAllkeypoints[0].size();j++) {
-        int x = vAllkeypoints[0][j].pt.x;
-        int y = vAllkeypoints[0][j].pt.y;
+    for (int j=0;j<allkeypoints[0].size();j++) {
+        int x = allkeypoints[0][j].pt.x;
+        int y = allkeypoints[0][j].pt.y;
+        int response = allkeypoints[0][j].response;
+        // putText(_images, to_string(response), cvPoint(x, y-10), FONT_HERSHEY_SIMPLEX, 0.5, CV_RGB(255, 0, 0), 1);
         circle(_images, cvPoint(x,y), 5, Scalar(0, 255, 0), 2, 4, 0);
     }
     // 特征提取区域

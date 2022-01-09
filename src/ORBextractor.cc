@@ -572,7 +572,7 @@ ORBextractor::ORBextractor(int _nfeatures,		//指定要提取的特征点数目
         ++v0;
     }
 
-    Acc_Extractor = new Accelerate(nlevels); // 初始化加速类
+    Acc_Extractor = new Accelerate(nlevels, scaleFactor); // 初始化加速类
 }
 
 
@@ -1191,10 +1191,8 @@ void ORBextractor::ComputeKeyPointsOctTree(
         computeOrientation(mvImagePyramid[level],	//对应的图层的图像
 						   allKeypoints[level], 	//这个图层中提取并保留下来的特征点容器
 						   umax);					//以及PATCH的横坐标边界
-    // Acc_Extractor->getAllKeypoints(allKeypoints);   // 保留提取特征点信息
-    
-    // Acc_Extractor->saveExtractor();        // 将加速提取特征点信息通过图片保存
-    
+
+    // Acc_Extractor->saveExtractor(allKeypoints);        // 将加速提取特征点信息通过图片保存
     // Acc_Extractor->save2Ddis();   // 
 }
 
@@ -1712,14 +1710,23 @@ static void computeDescriptors(const Mat& image, vector<KeyPoint>& keypoints, Ma
         assert(image.type() == CV_8UC1 );
 
         // 图像添加到加速类
-        Acc_Extractor->getImage(image);
+        
 
         // 上一帧信息添加到类
+        // std::chrono::steady_clock::time_point time_StartGetinfo = std::chrono::steady_clock::now();
         Acc_Extractor->getPreframe(mPreframe);
-
+        // std::chrono::steady_clock::time_point time_EndGetinfo = std::chrono::steady_clock::now();
+        // double mTimeGetinfo = std::chrono::duration_cast<std::chrono::duration<double,std::milli> >(time_EndGetinfo - time_StartGetinfo).count();
+        // cout<< "  Getinfo time:" << mTimeGetinfo <<endl;
         // Pre-compute the scale pyramid
         // Step 2 构建图像金字塔
+
+        // time_StartGetinfo = std::chrono::steady_clock::now();
         ComputePyramid(image, mPreframe->isGFpoints);
+        Acc_Extractor->getImage(mvImagePyramid[0]);
+        // time_EndGetinfo = std::chrono::steady_clock::now();
+        // mTimeGetinfo = std::chrono::duration_cast<std::chrono::duration<double,std::milli> >(time_EndGetinfo - time_StartGetinfo).count();
+        // cout<< "  ComputePyramid time:" << mTimeGetinfo <<endl;
 
         // Step 3 计算图像的特征点，并且将特征点进行均匀化。均匀的特征点可以提高位姿计算精度
         // 存储所有的特征点，注意此处为二维的vector，第一维存储的是金字塔的层数，第二维存储的是那一层金字塔图像里提取的所有特征点
@@ -1867,19 +1874,19 @@ static void computeDescriptors(const Mat& image, vector<KeyPoint>& keypoints, Ma
                 // 计算缩放后的投影点
                 Acc_Extractor->vGFpoints[level].clear();
                 Acc_Extractor->vpDis[level].clear();
+                Acc_Extractor->pMoves[level].clear();
                 for (int i=0;i<Acc_Extractor->vGFpoints[0].size();i++) {
-                    float _x = Acc_Extractor->vGFpoints[level-1][i].x / scaleFactor;
-                    float _y = Acc_Extractor->vGFpoints[level-1][i].y / scaleFactor;
-                    Point2f _xy = cvPoint2D32f(_x, _y);
+                    Point2f _xy = Acc_Extractor->vGFpoints[level-1][i] / scaleFactor;
                     Acc_Extractor->vGFpoints[level].push_back(_xy);
                 }
                 for (int i=0;i<Acc_Extractor->vpDis[0].size();i++) {
-                    float _x = Acc_Extractor->vpDis[level-1][i].x / scaleFactor;
-                    float _y = Acc_Extractor->vpDis[level-1][i].y / scaleFactor;
-                    Point2f _xy = cvPoint2D32f(_x, _y);
+                    Point2f _xy = Acc_Extractor->vpDis[level-1][i] / scaleFactor;
                     Acc_Extractor->vpDis[level].push_back(_xy);
                 }
-                Acc_Extractor->pMove[level] = Acc_Extractor->pMove[level-1] / scaleFactor;
+                for (int i=0;i<Acc_Extractor->pMoves[0].size();i++) {
+                    Point2f _xy = Acc_Extractor->pMoves[level-1][i] / scaleFactor;;
+                    Acc_Extractor->pMoves[level].push_back(_xy);
+                }
 
                 //将上一层金字塔图像根据设定sz缩放到当前层级
                 resize(mvImagePyramid[level-1],	//输入图像
@@ -1888,35 +1895,18 @@ static void computeDescriptors(const Mat& image, vector<KeyPoint>& keypoints, Ma
                     0, 						//水平方向上的缩放系数，留0表示自动计算
                     0,  						//垂直方向上的缩放系数，留0表示自动计算
                     cv::INTER_LINEAR);		//图像缩放的差值算法类型，这里的是线性插值算法
-
-                //把源图像拷贝到目的图像的中央，四面填充指定的像素。图片如果已经拷贝到中间，只填充边界
-                //TODO 貌似这样做是因为在计算描述子前，进行高斯滤波的时候，图像边界会导致一些问题，说不明白
-                //EDGE_THRESHOLD指的这个边界的宽度，由于这个边界之外的像素不是原图像素而是算法生成出来的，所以不能够在EDGE_THRESHOLD之外提取特征点			
+		
                 copyMakeBorder(mvImagePyramid[level], 					//源图像
                             temp, 									//目标图像（此时其实就已经有大了一圈的尺寸了）
                             EDGE_THRESHOLD, EDGE_THRESHOLD, 			//top & bottom 需要扩展的border大小
                             EDGE_THRESHOLD, EDGE_THRESHOLD,			//left & right 需要扩展的border大小
                             BORDER_REFLECT_101+BORDER_ISOLATED);     //扩充方式，opencv给出的解释：
-                
-                /*Various border types, image boundaries are denoted with '|'
-                * BORDER_REPLICATE:     aaaaaa|abcdefgh|hhhhhhh
-                * BORDER_REFLECT:       fedcba|abcdefgh|hgfedcb
-                * BORDER_REFLECT_101:   gfedcb|abcdefgh|gfedcba
-                * BORDER_WRAP:          cdefgh|abcdefgh|abcdefg
-                * BORDER_CONSTANT:      iiiiii|abcdefgh|iiiiiii  with some specified 'i'
-                */
-                
-                //BORDER_ISOLATED	表示对整个图像进行操作
-                // https://docs.opencv.org/3.4.4/d2/de8/group__core__array.html#ga2ac1049c2c3dd25c2b41bffe17658a36
-
             }
             else
             {
-                //对于底层图像，直接就扩充边界了
-                //?temp 是在循环内部新定义的，在该函数里又作为输出，并没有使用啊！
-                copyMakeBorder(image,			//这里是原图像
+                copyMakeBorder(image,
                             temp, EDGE_THRESHOLD, EDGE_THRESHOLD, EDGE_THRESHOLD, EDGE_THRESHOLD,
-                            BORDER_REFLECT_101);            
+                            BORDER_REFLECT_101);
             }
         }
     }
@@ -1970,7 +1960,7 @@ static void computeDescriptors(const Mat& image, vector<KeyPoint>& keypoints, Ma
                 //?temp 是在循环内部新定义的，在该函数里又作为输出，并没有使用啊！
                 copyMakeBorder(image,			//这里是原图像
                             temp, EDGE_THRESHOLD, EDGE_THRESHOLD, EDGE_THRESHOLD, EDGE_THRESHOLD,
-                            BORDER_REFLECT_101);            
+                            BORDER_REFLECT_101);
             }
         }
     }
