@@ -155,6 +155,12 @@ public:
     int ObsRank;
     // 地图点响应值，最新
     float response;
+
+    int nProjects;    // 投影次数
+    int nMatchs;      // 匹配次数
+    int nIners;       // 内点次数
+    int nOuters;      // 外点次数
+
     //
     float u_proj, v_proj;
     //

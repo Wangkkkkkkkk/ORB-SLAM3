@@ -1321,9 +1321,10 @@ cv::Mat Tracking::GrabImageStereo(const cv::Mat &imRectLeft, const cv::Mat &imRe
         mDistCoef,              //去畸变参数
         mbf,                    //基线长度
 		mThDepth,				//远点,近点的区分阈值
-		mpCamera);				//相机模型
+		mpCamera,               //相机模型
+        &mLastFrame);				
     else if(mSensor == System::STEREO && mpCamera2)
-        mCurrentFrame = Frame(mImGray,imGrayRight,timestamp,mpORBextractorLeft,mpORBextractorRight,mpORBVocabulary,mK,mDistCoef,mbf,mThDepth,mpCamera,mpCamera2,mTlr);
+        mCurrentFrame = Frame(mImGray,imGrayRight,timestamp,mpORBextractorLeft,mpORBextractorRight,mpORBVocabulary,mK,mDistCoef,mbf,mThDepth,mpCamera,mpCamera2,mTlr,&mLastFrame);
     else if(mSensor == System::IMU_STEREO && !mpCamera2)
         mCurrentFrame = Frame(mImGray,imGrayRight,timestamp,mpORBextractorLeft,mpORBextractorRight,mpORBVocabulary,mK,mDistCoef,mbf,mThDepth,mpCamera,&mLastFrame,*mpImuCalib);
     else if(mSensor == System::IMU_STEREO && mpCamera2)
@@ -2236,8 +2237,8 @@ void Tracking::Track()
             if(bOK)
             {
                 // 局部地图跟踪
-                bOK = TrackLocalMapByGF();
-                // bOK = TrackLocalMap();
+                // bOK = TrackLocalMapByGF();
+                bOK = TrackLocalMap();
 
             }
             if(!bOK)
@@ -2249,8 +2250,8 @@ void Tracking::Track()
             // a local map and therefore we do not perform TrackLocalMap(). Once the system relocalizes
             // the camera we will use the local map again.
             if(bOK && !mbVO)
-                bOK = TrackLocalMapByGF();
-                // bOK = TrackLocalMap();
+                // bOK = TrackLocalMapByGF();
+                bOK = TrackLocalMap();
         }
         // 到此为止跟踪确定位姿阶段结束，下面开始做收尾工作和为下一帧做准备
 
@@ -2374,6 +2375,7 @@ void Tracking::Track()
                 mVelocity = mCurrentFrame.mTcw * LastTwc;
                 mCurrentFrame.mPredictTcw = mVelocity * mCurrentFrame.mTcw;
                 mCurrentFrame.mPredictTcw_last = mLastFrame.mPredictTcw.clone();
+                mCurrentFrame.isGFpoints = true;
                 // cout<< "mVelocity = " << endl << mVelocity <<endl;
             }
             else
@@ -3282,6 +3284,7 @@ bool Tracking::TrackWithMotionModel()
             {
                 // 如果优化后判断某个地图点是外点，清除它的所有关系
                 MapPoint* pMP = mCurrentFrame.mvpMapPoints[i];
+                pMP->nOuters++;
 
                 mCurrentFrame.mvpMapPoints[i]=static_cast<MapPoint*>(NULL);
                 mCurrentFrame.mvbOutlier[i]=false;
@@ -3296,6 +3299,7 @@ bool Tracking::TrackWithMotionModel()
             }
             else if(mCurrentFrame.mvpMapPoints[i]->Observations()>0)
                 // 累加成功匹配到的地图点数目
+                mCurrentFrame.mvpMapPoints[i]->nIners++;
                 nmatchesMap++;
         }
     }

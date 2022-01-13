@@ -913,6 +913,12 @@ void LocalMapping::CreateNewMapPoints()
             // 地图点加入响应值信息
             pMP->response = mpCurrentKeyFrame->mvKeys[idx1].response;
 
+            // 优特征点判断条件初始化
+            pMP->nProjects = 0;
+            pMP->nMatchs = 0;
+            pMP->nIners = 0;
+            pMP->nOuters = 0;
+
             mpAtlas->AddMapPoint(pMP);
             // Step 6.10：将新产生的点放入检测队列
             // 这些MapPoints都会经过MapPointCulling函数的检验

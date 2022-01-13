@@ -1050,8 +1050,15 @@ void ORBextractor::ComputeKeyPointsOctTree(
 	//图像cell的尺寸，是个正方形，可以理解为边长in像素坐标
     const float W = 35;
 
+    // std::chrono::steady_clock::time_point time_StartGetinfo = std::chrono::steady_clock::now();
+    Acc_Extractor->computeProject();
+    // std::chrono::steady_clock::time_point time_EndGetinfo = std::chrono::steady_clock::now();
+    // double mTimeGetinfo = std::chrono::duration_cast<std::chrono::duration<double,std::milli> >(time_EndGetinfo - time_StartGetinfo).count();
+    // cout<< "computeProject time:" << mTimeGetinfo <<endl;
+
     // 对每一层图像做处理
 	//遍历所有图像
+    
     for (int level = 0; level < nlevels; ++level)
     {
 		//计算这层图像的坐标边界， NOTICE 注意这里是坐标边界，EDGE_THRESHOLD指的应该是可以提取特征点的有效图像边界，后面会一直使用“有效图像边界“这个自创名词
@@ -1077,9 +1084,13 @@ void ORBextractor::ComputeKeyPointsOctTree(
         const int hCell = ceil(height/nRows);
 
         // 构建投影直方图
+        // std::chrono::steady_clock::time_point time_StartGetinfo = std::chrono::steady_clock::now();
         vector<vector<int> > vStat = Acc_Extractor->buildStat(nCols, nRows, wCell, hCell,
                                                               minBorderX, minBorderY, maxBorderX, maxBorderY,
-                                                              level, W);
+                                                              level, W, width, height);
+        // std::chrono::steady_clock::time_point time_EndGetinfo = std::chrono::steady_clock::now();
+        // double mTimeGetinfo = std::chrono::duration_cast<std::chrono::duration<double,std::milli> >(time_EndGetinfo - time_StartGetinfo).count();
+        // cout<< "  buidStat time:" << mTimeGetinfo <<endl;
 
 		//开始遍历图像网格，还是以行开始遍历的
         for(int i=0; i<nRows; i++)
@@ -1106,11 +1117,14 @@ void ORBextractor::ComputeKeyPointsOctTree(
                 const float iniX =minBorderX+j*wCell;
 				//计算这列网格的最大列坐标，+6的含义和前面相同
                 float maxX = iniX+wCell+6;
-				//判断坐标是否在图像中
-				//TODO 不太能够明白为什么要-6，前面不都是-3吗
-				//!BUG  正确应该是maxBorderX-3
-                if(iniX>=maxBorderX-3 || vStat[i][j] == 0)
+				
+                if (vStat[i][j] == 0){
                     continue;
+                }
+                //判断坐标是否在图像中
+                if(iniX>=maxBorderX-3)
+                    continue;
+                
 				//如果最大坐标越界那么委屈一下
                 if(maxX>maxBorderX)
                     maxX = maxBorderX;
@@ -1191,9 +1205,8 @@ void ORBextractor::ComputeKeyPointsOctTree(
         computeOrientation(mvImagePyramid[level],	//对应的图层的图像
 						   allKeypoints[level], 	//这个图层中提取并保留下来的特征点容器
 						   umax);					//以及PATCH的横坐标边界
-
     // Acc_Extractor->saveExtractor(allKeypoints);        // 将加速提取特征点信息通过图片保存
-    // Acc_Extractor->save2Ddis();   // 
+    // Acc_Extractor->save2Ddis();
 }
 
 //计算四叉树的特征点，函数名字后面的OctTree只是说明了在过滤和分配特征点时所使用的方式
@@ -1701,29 +1714,21 @@ static void computeDescriptors(const Mat& image, vector<KeyPoint>& keypoints, Ma
 
 	//获取图像的大小
     Mat image = _image.getMat();
+    Acc_Extractor->getImage(image);
 
     // 根据投影点聚类特征提取网格
     vector < vector<KeyPoint> > allKeypoints;
     vector<vector<cv::Point2f> > sGFpoints;
-    if (mPreframe != NULL && mPreframe->isGFpoints == true) {
+    if (mPreframe != NULL && !mPreframe->mPredictTcw_last.empty() && mPreframe->mnId > 30*5) {
        //判断图像的格式是否正确，要求是单通道灰度值
         assert(image.type() == CV_8UC1 );
+        // 上一帧信息加入加速类
+        Acc_Extractor->getFrame(mPreframe);
 
-        // 图像添加到加速类
-        
-
-        // 上一帧信息添加到类
-        // std::chrono::steady_clock::time_point time_StartGetinfo = std::chrono::steady_clock::now();
-        Acc_Extractor->getPreframe(mPreframe);
-        // std::chrono::steady_clock::time_point time_EndGetinfo = std::chrono::steady_clock::now();
-        // double mTimeGetinfo = std::chrono::duration_cast<std::chrono::duration<double,std::milli> >(time_EndGetinfo - time_StartGetinfo).count();
-        // cout<< "  Getinfo time:" << mTimeGetinfo <<endl;
         // Pre-compute the scale pyramid
         // Step 2 构建图像金字塔
-
         // time_StartGetinfo = std::chrono::steady_clock::now();
         ComputePyramid(image, mPreframe->isGFpoints);
-        Acc_Extractor->getImage(mvImagePyramid[0]);
         // time_EndGetinfo = std::chrono::steady_clock::now();
         // mTimeGetinfo = std::chrono::duration_cast<std::chrono::duration<double,std::milli> >(time_EndGetinfo - time_StartGetinfo).count();
         // cout<< "  ComputePyramid time:" << mTimeGetinfo <<endl;
@@ -1850,7 +1855,7 @@ static void computeDescriptors(const Mat& image, vector<KeyPoint>& keypoints, Ma
                 i++;
             }
         }
-        //cout << "[ORBextractor]: extracted " << _keypoints.size() << " KeyPoints" << endl;
+        // cout << "[ORBextractor]: extracted " << _keypoints.size() << " KeyPoints" << endl;
         return monoIndex;
     }
 	/**
@@ -1874,7 +1879,6 @@ static void computeDescriptors(const Mat& image, vector<KeyPoint>& keypoints, Ma
                 // 计算缩放后的投影点
                 Acc_Extractor->vGFpoints[level].clear();
                 Acc_Extractor->vpDis[level].clear();
-                Acc_Extractor->pMoves[level].clear();
                 for (int i=0;i<Acc_Extractor->vGFpoints[0].size();i++) {
                     Point2f _xy = Acc_Extractor->vGFpoints[level-1][i] / scaleFactor;
                     Acc_Extractor->vGFpoints[level].push_back(_xy);
@@ -1882,10 +1886,6 @@ static void computeDescriptors(const Mat& image, vector<KeyPoint>& keypoints, Ma
                 for (int i=0;i<Acc_Extractor->vpDis[0].size();i++) {
                     Point2f _xy = Acc_Extractor->vpDis[level-1][i] / scaleFactor;
                     Acc_Extractor->vpDis[level].push_back(_xy);
-                }
-                for (int i=0;i<Acc_Extractor->pMoves[0].size();i++) {
-                    Point2f _xy = Acc_Extractor->pMoves[level-1][i] / scaleFactor;;
-                    Acc_Extractor->pMoves[level].push_back(_xy);
                 }
 
                 //将上一层金字塔图像根据设定sz缩放到当前层级

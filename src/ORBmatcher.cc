@@ -2510,6 +2510,9 @@ int ORBmatcher::SearchByProjection(Frame &CurrentFrame, const Frame &LastFrame, 
         {
             if(!LastFrame.mvbOutlier[i])
             {
+                // 投影次数 +1
+                pMP->nProjects++;
+
                 // 对上一帧有效的MapPoints投影到当前帧坐标系
                 cv::Mat x3Dw = pMP->GetWorldPos();
                 cv::Mat x3Dc = Rcw*x3Dw+tcw;
@@ -2592,6 +2595,7 @@ int ORBmatcher::SearchByProjection(Frame &CurrentFrame, const Frame &LastFrame, 
                     if(bestDist<=TH_HIGH)
                     {
                         pMP->response = CurrentFrame.mvKeysUn[bestIdx2].response;    // 特征点响应值保存到地图点
+                        pMP->nMatchs++;
                         CurrentFrame.mvpMapPoints[bestIdx2]=pMP;
                         nmatches++;
 
@@ -2661,6 +2665,7 @@ int ORBmatcher::SearchByProjection(Frame &CurrentFrame, const Frame &LastFrame, 
                         if(bestDist<=TH_HIGH)
                         {
                             pMP->response = CurrentFrame.mvKeysUn[bestIdx2 + CurrentFrame.Nleft].response;  // 特征点响应值保存到地图点
+                            pMP->nMatchs++;
                             CurrentFrame.mvpMapPoints[bestIdx2 + CurrentFrame.Nleft]=pMP;
                             nmatches++;
                             if(mbCheckOrientation)
