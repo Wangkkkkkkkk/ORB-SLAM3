@@ -100,6 +100,15 @@ vector<vector<int> > Accelerate::buildStat(int _nCols, int _nRows, int _wCell, i
     vector<int> vstat(nCols[level]);
     vStat[level].resize(nRows[level],vstat);
 
+    if (nProjectNumber < 100) {
+        for (int r=0;r<nRows[level];r++) {
+            for (int i=0;i<nCols[level];i++) {
+                vStat[level][r][i] = 1;
+            }
+        }
+        return vStat[level];
+    }
+
     computeMean();
 
     // 根据投影点选择提取特征区域
@@ -117,15 +126,15 @@ vector<vector<int> > Accelerate::buildStat(int _nCols, int _nRows, int _wCell, i
         addCellEdge(n_x, n_y, _col, _row);
     }
 
-    computeDensity();
+    // computeDensity();
 
     // 添加图像边缘特征提取
     addEdge();
 
     // 添加特征提取区域的密度
-    addDensity();
+    // addDensity();
 
-    return vStat_out[level];
+    return vStat[level];
 }
 
 // 计算投影
@@ -148,7 +157,7 @@ void Accelerate::computeProject() {
     vGFpoints[0].clear();
     vfResponses.clear();
     vpDis[0].clear();
-    int num=0;
+    nProjectNumber = 0;
     d = 0;
     for(int i=0; i<mLastFrame->N; i++)
     {
@@ -196,11 +205,11 @@ void Accelerate::computeProject() {
                 vfResponses.push_back(mLastFrame->mvpMapPoints[i]->response);
                 vpDis[0].push_back(uv - uv_pre);
 
-                num++;
+                nProjectNumber++;
             }
         }
     }
-    d = d / num;
+    d = d / nProjectNumber;
 
     if (nNumber > 0) {
        computeHomography();
@@ -400,13 +409,13 @@ void Accelerate::computeDensity() {
     }
     density[level] = float(nEar) / (nRows[level] * nCols[level]);
 
-    if (density[level] < 0.15) {
-        for (int r=0;r<nRows[level];r++) {
-            for (int i=0;i<nCols[level];i++) {
-                vStat[level][r][i] = 1;
-            }
-        }
-    }
+    // if (density[level] < 0.15) {
+    //     for (int r=0;r<nRows[level];r++) {
+    //         for (int i=0;i<nCols[level];i++) {
+    //             vStat[level][r][i] = 1;
+    //         }
+    //     }
+    // }
 }
 
 void Accelerate::addEdge() {
@@ -709,6 +718,7 @@ void Accelerate::saveExtractor(vector<vector<KeyPoint> > allkeypoints) {
     }
     int dens = density[0] * 100;
     putText(_images, to_string(dens) + "%", cvPoint(0, 470), FONT_HERSHEY_SIMPLEX, 0.75, CV_RGB(255, 0, 0), 1);
+    putText(_images, to_string(nProjectNumber), cvPoint(100, 470), FONT_HERSHEY_SIMPLEX, 0.75, CV_RGB(255, 0, 0), 1);
     imwrite(filename, _images);
 }
 

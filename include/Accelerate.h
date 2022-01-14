@@ -61,6 +61,8 @@ public:
     Mat mTcw_pre;                // 上一帧相机变换矩阵
     Mat mPredictTcw;             // 当前帧预测的相机变换矩阵
 
+    int nProjectNumber;
+
     int nW;
     int level;                       // 当前金字塔层级
     vector<vector<Point2f> > vGFpoints;       // 优地图点
