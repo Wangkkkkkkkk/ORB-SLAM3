@@ -8,6 +8,11 @@
 #include <vector>
 #include <list>
 #include <opencv2/opencv.hpp>
+#include <queue>
+
+#include "armadillo"
+
+// #define ACCELERATE_TIME
 
 using namespace std;
 using namespace cv;
@@ -16,6 +21,7 @@ namespace ORB_SLAM3
 {
 
 class Frame;
+class MapPoint;
 
 class Accelerate
 {
@@ -31,11 +37,20 @@ public:
                                    int _minBorderX, int _minBorderY, int _maxBorderX, int _maxBorderY,
                                    int _level, float _W, float _width, float _heights);  // 构建统计数组
     void computeProject();
+    arma::mat compute_H_subblock_simplied(Mat point_world, Mat Rcw, Mat t, arma::mat & dhu_dhrl);
+    arma::rowvec r2q(arma::mat R);
+    arma::rowvec qreset(arma::rowvec q);
+    arma::mat dRq_times_by_dq(arma::rowvec & q, arma::rowvec & aMat);
+    double _logDet(arma::mat M);
+    void ReWeightInfoMat(Frame* F, int & kptIdx, MapPoint * pMP,
+                         arma::mat & H_meas, float & res_u, float & res_v,
+                         arma::mat & H_proj, arma::mat & H_rw);
+    void compute_Huber_Weight (float residual_, float & weight_);
+    void compute_Huber_Loss (float residual_, float & loss_);
     Point2f project(Mat _camera);
     void computeHomography();
     void computeMean();
     void addCellEdge(int n_x, int n_y, int _col, int _row);
-    void addDensity();
     void computeDensity();
     void addEdge();
     vector<float> computeNode(Point2f p1, Point2f p2);
@@ -61,14 +76,23 @@ public:
     Mat mTcw_pre;                // 上一帧相机变换矩阵
     Mat mPredictTcw;             // 当前帧预测的相机变换矩阵
 
+    vector<MapPoint*> mGFMapPoints;
+    vector<MapPoint*> mEXMapPoints;
+
     int nProjectNumber;
+    int last_nProjectNumber;
+    int GF_number;
+    int last_GF_number;
 
     int nW;
     int level;                       // 当前金字塔层级
-    vector<vector<Point2f> > vGFpoints;       // 优地图点
+    vector<vector<Point2f> > vPoints;       // 优地图点
     vector<vector<vector<int> > > vStat;      // 统计矩阵
     vector<vector<vector<int> > > vStat_pre;      // 统计矩阵
     vector<vector<vector<int> > > vStat_out;      // 统计矩阵
+
+    vector<vector<Point2f> > vGFpoints;
+    priority_queue<pair<double, int> > curDet_que;
 
     vector<int> nCols;
     vector<int> nRows;

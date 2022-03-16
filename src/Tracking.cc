@@ -2829,6 +2829,8 @@ void Tracking::CreateInitialMapMonocular()
 
         // 地图点加入响应值信息
         pMP->response = pKFcur->mvKeys[mvIniMatches[i]].response;
+        pMP->isGF = false;
+        pMP->isEX = false;
 
         //Fill Current Frame structure
         //mvIniMatches下标i表示在初始化参考帧中的特征点的序号

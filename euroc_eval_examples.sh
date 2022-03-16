@@ -1,6 +1,8 @@
 #!/bin/bash
 pathDatasetEuroc='/home/kai/file/VO_SpeedUp/Dataset/EuRoc' #Example, it is necesary to change it by the dataset path
 
+pathDatasetTUM_VI='/home/kai/file/VO_SpeedUp/Dataset/TUM_VI'
+
 # Single Session Example (Pure visual)
 # echo "Launching MH01 with Stereo sensor"
 # ./Examples/Stereo/stereo_euroc ./Vocabulary/ORBvoc.txt ./Examples/Stereo/EuRoC.yaml "$pathDatasetEuroc"/MH01 ./Examples/Stereo/EuRoC_TimeStamps/MH01.txt dataset-MH01_stereo
@@ -103,3 +105,19 @@ pathDatasetEuroc='/home/kai/file/VO_SpeedUp/Dataset/EuRoc' #Example, it is neces
 # echo "Evaluation of Vicon Room 2 trajectory with Stereo sensor"
 # python evaluation/evaluate_ate_scale.py evaluation/Ground_truth/EuRoC_imu/V2_GT.txt f_dataset-V201_to_V203_monoi.txt --plot V201_to_V203_monoi.pdf
 
+# TUM_VI
+# Monocular Examples
+# echo "Launching Room 1 with Monocular sensor"
+# ./Examples/Monocular/mono_tum_vi ./Vocabulary/ORBvoc.txt ./Examples/Monocular/TUM_1024.yaml "$pathDatasetTUM_VI"/dataset-room1_1024_16/mav0/cam0/data ./Examples/Monocular/TUM_TimeStamps/dataset-room1_512.txt dataset-room1_1024_mono
+# echo "Evaluation of Room 1 trajectory with Mono sensor"
+# python evaluation/evaluate_ate_scale.py "$pathDatasetTUM_VI"/dataset-room1_1024_16/mav0/mocap0/data.csv f_dataset-room1_1024_mono.txt --plot dataset-room1_1024_mono.pdf --verbose2
+
+# echo "Launching Room 1 with Monocular sensor"
+# ./Examples/Monocular/mono_tum_vi ./Vocabulary/ORBvoc.txt ./Examples/Monocular/TUM_512.yaml "$pathDatasetTUM_VI"/dataset-room1_512_16/mav0/cam0/data ./Examples/Monocular/TUM_TimeStamps/dataset-room1_512.txt dataset-room1_512_mono
+# echo "Evaluation of Room 1 trajectory with Mono sensor"
+# python evaluation/evaluate_ate_scale.py "$pathDatasetTUM_VI"/dataset-room1_512_16/mav0/mocap0/data.csv f_dataset-room1_512_mono.txt --plot dataset-room1_512_mono.pdf --verbose2
+
+# echo "Launching Room 2 with Monocular sensor"
+# ./Examples/Monocular/mono_tum_vi ./Vocabulary/ORBvoc.txt ./Examples/Monocular/TUM_512.yaml "$pathDatasetTUM_VI"/dataset-room2_512_16/mav0/cam0/data ./Examples/Monocular/TUM_TimeStamps/dataset-room2_512.txt dataset-room2_512_mono
+# echo "Evaluation of Room 2 trajectory with Mono sensor"
+# python evaluation/evaluate_ate_scale.py "$pathDatasetTUM_VI"/dataset-room2_512_16/mav0/mocap0/data.csv f_dataset-room2_512_mono.txt --plot dataset-room2_512_mono.pdf --verbose2

@@ -1048,13 +1048,19 @@ void ORBextractor::ComputeKeyPointsOctTree(
     allKeypoints.resize(nlevels);
 
 	//图像cell的尺寸，是个正方形，可以理解为边长in像素坐标
-    const float W = 35;
+    const float W = 30;
 
-    // std::chrono::steady_clock::time_point time_StartGetinfo = std::chrono::steady_clock::now();
+#ifdef ACCELERATE_TIME
+    chrono::steady_clock::time_point time_StartGetinfo = chrono::steady_clock::now();
+#endif
+
     Acc_Extractor->computeProject();
-    // std::chrono::steady_clock::time_point time_EndGetinfo = std::chrono::steady_clock::now();
-    // double mTimeGetinfo = std::chrono::duration_cast<std::chrono::duration<double,std::milli> >(time_EndGetinfo - time_StartGetinfo).count();
-    // cout<< "computeProject time:" << mTimeGetinfo <<endl;
+
+#ifdef ACCELERATE_TIME
+    chrono::steady_clock::time_point time_EndGetinfo = chrono::steady_clock::now();
+    double mTimeGetinfo = chrono::duration_cast<chrono::duration<double, milli> >(time_EndGetinfo - time_StartGetinfo).count();
+    cout<< "computeProject time:" << mTimeGetinfo <<endl;
+#endif
 
     // 对每一层图像做处理
 	//遍历所有图像
@@ -1084,13 +1090,27 @@ void ORBextractor::ComputeKeyPointsOctTree(
         const int hCell = ceil(height/nRows);
 
         // 构建投影直方图
-        // std::chrono::steady_clock::time_point time_StartGetinfo = std::chrono::steady_clock::now();
+#ifdef ACCELERATE_TIME
+        chrono::steady_clock::time_point time_StartGetinfo = chrono::steady_clock::now();
+#endif
+
         vector<vector<int> > vStat = Acc_Extractor->buildStat(nCols, nRows, wCell, hCell,
                                                               minBorderX, minBorderY, maxBorderX, maxBorderY,
                                                               level, W, width, height);
-        // std::chrono::steady_clock::time_point time_EndGetinfo = std::chrono::steady_clock::now();
-        // double mTimeGetinfo = std::chrono::duration_cast<std::chrono::duration<double,std::milli> >(time_EndGetinfo - time_StartGetinfo).count();
-        // cout<< "  buidStat time:" << mTimeGetinfo <<endl;
+
+#ifdef ACCELERATE_TIME
+        chrono::steady_clock::time_point time_EndGetinfo = chrono::steady_clock::now();
+        double mTimeGetinfo = chrono::duration_cast<chrono::duration<double, milli> >(time_EndGetinfo - time_StartGetinfo).count();
+        cout<< "level:" << level << " buidStat time:" << mTimeGetinfo <<endl;
+#endif
+
+        int nFeature_number;
+        if (level < 3) {
+            nFeature_number = min(mnFeaturesPerLevel[level], int(mnFeaturesPerLevel[level] * Acc_Extractor->density[level] * 1.5));
+        }
+        else {
+            nFeature_number = mnFeaturesPerLevel[level] / 2;
+        }
 
 		//开始遍历图像网格，还是以行开始遍历的
         for(int i=0; i<nRows; i++)
@@ -1121,6 +1141,7 @@ void ORBextractor::ComputeKeyPointsOctTree(
                 if (vStat[i][j] == 0){
                     continue;
                 }
+
                 //判断坐标是否在图像中
                 if(iniX>=maxBorderX-3)
                     continue;
@@ -1178,7 +1199,7 @@ void ORBextractor::ComputeKeyPointsOctTree(
 																	//NOTICE 注意此时特征点所使用的坐标都是在“半径扩充图像”下的
 									  minBorderX, maxBorderX,		//当前图层图像的边界，而这里的坐标却都是在“边缘扩充图像”下的
                                       minBorderY, maxBorderY,
-									  mnFeaturesPerLevel[level], 	//希望保留下来的当前层图像的特征点个数
+									  nFeature_number, 	//希望保留下来的当前层图像的特征点个数
 									  level);						//当前层图像所在的图层
 
 		//PATCH_SIZE是对于底层的初始图像来说的，现在要根据当前图层的尺度缩放倍数进行缩放得到缩放后的PATCH大小 和特征点的方向计算有关
@@ -1740,6 +1761,7 @@ static void computeDescriptors(const Mat& image, vector<KeyPoint>& keypoints, Ma
         ComputeKeyPointsOctTree(allKeypoints, mPreframe->isGFpoints);
     }
     else {
+        Acc_Extractor->nNumber = -1;
         //判断图像的格式是否正确，要求是单通道灰度值
         assert(image.type() == CV_8UC1 );
 

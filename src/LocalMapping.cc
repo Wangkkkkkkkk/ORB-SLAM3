@@ -912,6 +912,8 @@ void LocalMapping::CreateNewMapPoints()
 
             // 地图点加入响应值信息
             pMP->response = mpCurrentKeyFrame->mvKeys[idx1].response;
+            pMP->isGF = false;
+            pMP->isEX = false;
 
             // 优特征点判断条件初始化
             pMP->nProjects = 0;

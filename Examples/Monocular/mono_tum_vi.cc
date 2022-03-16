@@ -103,7 +103,7 @@ int main(int argc, char **argv)
         {
 
             // Read image from file
-            im = cv::imread(vstrImageFilenames[seq][ni],cv::IMREAD_UNCHANGED);
+            im = cv::imread(vstrImageFilenames[seq][ni],cv::IMREAD_GRAYSCALE);
 
             // clahe
             clahe->apply(im,im);
@@ -125,6 +125,7 @@ int main(int argc, char **argv)
     #endif
 
             // Pass the image to the SLAM system
+            // cout<< "image:" << endl << im <<endl;
             SLAM.TrackMonocular(im,tframe); // TODO change to monocular_inertial
 
     #ifdef COMPILEDWITHC11

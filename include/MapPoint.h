@@ -156,6 +156,11 @@ public:
     // 地图点响应值，最新
     float response;
 
+    bool isGF;
+    bool isEX;
+
+    cv::Point2f last_pre_uv;
+
     int nProjects;    // 投影次数
     int nMatchs;      // 匹配次数
     int nIners;       // 内点次数

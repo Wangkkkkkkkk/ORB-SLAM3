@@ -24,6 +24,8 @@
 #include <opencv2/opencv.hpp>
 #include <Accelerate.h>
 
+// #define ACCELERATE_TIME
+
 
 namespace ORB_SLAM3
 {

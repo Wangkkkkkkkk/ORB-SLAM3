@@ -21,6 +21,7 @@ Accelerate::Accelerate(int _nlevels, float _factor):
     nNumberAll = -1;
     nNumber = -1;
 
+    vPoints.resize(nlevels);
     vGFpoints.resize(nlevels);
     vStat.resize(nlevels);
     vStat_pre.resize(nlevels);
@@ -50,6 +51,9 @@ Accelerate::Accelerate(int _nlevels, float _factor):
     memcpy(dis_tilted, _dis_tilted, sizeof(_dis_tilted));
 
     isGetK = false;
+
+    last_GF_number = 1;
+    last_nProjectNumber = 1;
 }
 
 void Accelerate::getImage(Mat images) {
@@ -100,12 +104,13 @@ vector<vector<int> > Accelerate::buildStat(int _nCols, int _nRows, int _wCell, i
     vector<int> vstat(nCols[level]);
     vStat[level].resize(nRows[level],vstat);
 
-    if (nProjectNumber < 100) {
+    if (GF_number < 100) {
         for (int r=0;r<nRows[level];r++) {
             for (int i=0;i<nCols[level];i++) {
                 vStat[level][r][i] = 1;
             }
         }
+        density[level] = 1;
         return vStat[level];
     }
 
@@ -126,14 +131,23 @@ vector<vector<int> > Accelerate::buildStat(int _nCols, int _nRows, int _wCell, i
         addCellEdge(n_x, n_y, _col, _row);
     }
 
-    // computeDensity();
+    computeDensity();
 
     // 添加图像边缘特征提取
     addEdge();
 
-    // 添加特征提取区域的密度
-    // addDensity();
-
+    // cout<< "vStat:" << endl;
+    // for (int r=0;r<nRows[level];r++) {
+    //     for (int i=0;i<nCols[level];i++) {
+    //         if (vStat[level][r][i] > 0) {
+    //             cout<< "1 ";
+    //         }
+    //         else {
+    //             cout<< "0 ";
+    //         }
+    //     }
+    //     cout<<endl;
+    // }
     return vStat[level];
 }
 
@@ -154,65 +168,347 @@ void Accelerate::computeProject() {
     Mat Rcw_prelast = mPredictTcw_last.rowRange(0,3).colRange(0,3);
     Mat tcw_prelast = mPredictTcw_last.rowRange(0,3).col(3);
 
+    vPoints[0].clear();
     vGFpoints[0].clear();
-    vfResponses.clear();
     vpDis[0].clear();
+
+    vector<int> Point_index;
+    int nAllProject = 0;
     nProjectNumber = 0;
     d = 0;
+
+#ifdef ACCELERATE_TIME
+    double compute_GF = 0;
+    double compute_GF_H = 0;
+    double compute_GF_RW = 0;
+    double compute_project = 0;
+#endif
+
     for(int i=0; i<mLastFrame->N; i++)
     {
         if(mLastFrame->mvpMapPoints[i])
         {
             if(!mLastFrame->mvbOutlier[i])
             {
-                // 优特征点判断
-                int _nProject = mLastFrame->mvpMapPoints[i]->nProjects;
-                int _nMatch = mLastFrame->mvpMapPoints[i]->nMatchs;
-                int _nIner = mLastFrame->mvpMapPoints[i]->nIners;
-                int _nOuter = mLastFrame->mvpMapPoints[i]->nOuters;
-                // cout<< "_nProject:" << _nProject << " _nMatch:" << _nMatch << " _nIner:" << _nIner << " _nOuter:" << _nOuter <<endl;
-
-                if (_nProject > 10 && (_nIner + _nOuter) > 0) {
-                    // cout<< "_nProject:" << _nProject << " _nMatch:" << _nMatch << " _nIner:" << _nIner << " _nOuter:" << _nOuter <<endl;
-                    float _recall = float(_nMatch) / float(_nProject);
-                    float _precision = float(_nIner) / float(_nIner + _nOuter);
-                    // cout<< "_recall:" << _recall << "  _precision:" << _precision <<endl;
-
-                    if (_recall < 0.8 || _precision < 0.8) {
-                        continue;
-                    }
-                }
-                
-
                 // 提前将优特征点投影到预测下一帧的图像上，下一帧位姿采用恒速模型
                 Mat _point_world = mLastFrame->mvpMapPoints[i]->GetWorldPos();
 
+#ifdef ACCELERATE_TIME
+                chrono::steady_clock::time_point time_StartComputeProject1 = chrono::steady_clock::now();
+#endif
+
                 Mat _predict_camera = Rcw_last * _point_world + tcw_last;
                 Point2f _predict_uv = project(_predict_camera);
+
+#ifdef ACCELERATE_TIME
+                chrono::steady_clock::time_point time_EndComputeProject1 = chrono::steady_clock::now();
+                double mTimeComputeProject1 = chrono::duration_cast<chrono::duration<double, milli> >(time_EndComputeProject1 - time_StartComputeProject1).count();
+                compute_project += mTimeComputeProject1;
+#endif
 
                 if (_predict_uv.x < 0 || _predict_uv.y < 0 || _predict_uv.x > nImages_width || _predict_uv.y > nImages_height) {
                     continue;
                 }
 
+#ifdef ACCELERATE_TIME
+                chrono::steady_clock::time_point time_StartComputeProject2 = chrono::steady_clock::now();
+#endif
+
                 Mat x3Dc = Rcw * _point_world + tcw;
                 d += x3Dc.at<float>(2, 0);
                 Point2f uv = project(x3Dc);
 
+#ifdef ACCELERATE_TIME
+                chrono::steady_clock::time_point time_EndComputeProject2 = chrono::steady_clock::now();
+                double mTimeComputeProject2 = chrono::duration_cast<chrono::duration<double, milli> >(time_EndComputeProject2 - time_StartComputeProject2).count();
+                compute_project += mTimeComputeProject2;
+#endif
+
+#ifdef ACCELERATE_TIME
+                chrono::steady_clock::time_point time_StartComputeGF = chrono::steady_clock::now();
+#endif
+                // 优特征点判断
+                arma::mat H_meas, H_proj;
+                H_meas = compute_H_subblock_simplied(_point_world, Rcw_last, tcw_last, H_proj);
+                // cout<< "H_meas:" <<endl<< H_meas <<endl;
+                
+#ifdef ACCELERATE_TIME
+                chrono::steady_clock::time_point time_EndComputeGF_H = chrono::steady_clock::now();
+                double mTimeComputeGF_H = chrono::duration_cast<chrono::duration<double, milli> >(time_EndComputeGF_H - time_StartComputeGF).count();
+                compute_GF_H += mTimeComputeGF_H;
+#endif
+
+                float res_u = mLastFrame->mvKeys[i].pt.x - uv.x,
+                      res_v = mLastFrame->mvKeys[i].pt.y - uv.y;  // res_u, res_v 是投影误差
+                // cout<< "res_u:" << res_u << " res_v:" << res_v <<endl;
+
+                arma::mat curMat;
+                ReWeightInfoMat(mLastFrame, i, mLastFrame->mvpMapPoints[i],
+                                H_meas, res_u, res_v,
+                                H_proj, curMat);
+                // cout<< "curMat:" <<endl<< curMat <<endl;
+
+
+                double curDet = _logDet(curMat);
+                // cout<< "curDet:" << curDet <<endl;
+
+#ifdef ACCELERATE_TIME
+                chrono::steady_clock::time_point time_EndComputeGF = chrono::steady_clock::now();
+                double mTimeComputeGF = chrono::duration_cast<chrono::duration<double, milli> >(time_EndComputeGF - time_StartComputeGF).count();
+                compute_GF += mTimeComputeGF;
+
+                double mTimeComputeGF_RW = chrono::duration_cast<chrono::duration<double, milli> >(time_EndComputeGF - time_EndComputeGF_H).count();
+                compute_GF_RW += mTimeComputeGF_RW;
+#endif
+
+                pair<double, int> p(curDet, nProjectNumber);
+                curDet_que.push(p);
+                Point_index.push_back(i);
+
+#ifdef ACCELERATE_TIME
+                chrono::steady_clock::time_point time_StartComputeProject3 = chrono::steady_clock::now();
+#endif
+
                 Mat x3Dc_pre = Rcw_prelast * _point_world + tcw_prelast;
                 Point2f uv_pre = project(x3Dc_pre);
 
-                vGFpoints[0].push_back(_predict_uv);
-                vfResponses.push_back(mLastFrame->mvpMapPoints[i]->response);
+#ifdef ACCELERATE_TIME
+                chrono::steady_clock::time_point time_EndComputeProject3 = chrono::steady_clock::now();
+                double mTimeComputeProject3 = chrono::duration_cast<chrono::duration<double, milli> >(time_EndComputeProject3 - time_StartComputeProject3).count();
+                compute_project += mTimeComputeProject3;
+#endif
+
+                vPoints[0].push_back(_predict_uv);
                 vpDis[0].push_back(uv - uv_pre);
 
                 nProjectNumber++;
             }
         }
     }
+
+#ifdef ACCELERATE_TIME
+    cout<< "compute GF:" << compute_GF <<endl;
+    cout<< "  compute GF H:" << compute_GF_H <<endl;
+    cout<< "  compute GF RW:" << compute_GF_RW <<endl;
+    cout<< "compute project:" << compute_project <<endl;
+#endif
+
+    last_nProjectNumber = nProjectNumber;
+
     d = d / nProjectNumber;
+
+    // cout<< "curDet_que:" <<endl;
+    pair<double, int> x = curDet_que.top();
+    double max_logdet = x.first;
+    double logdet_th1 = max_logdet * 1.2;
+    double logdet_th2 = max_logdet * 1.5;
+    curDet_que.pop();
+
+    GF_number = 1;
+    vector<pair<double, int> > _curDet;
+    for (int i=1;i<nProjectNumber;i++) {
+        pair<double, int> _x = curDet_que.top();
+        // cout<< "curdet:" << x.first << " index:" << x.second <<endl;
+
+        if (_x.first > logdet_th1) {
+            vGFpoints[0].push_back(vPoints[0][_x.second]);
+            GF_number++;
+        }
+        else {
+            _curDet.push_back(_x);
+        }
+        curDet_que.pop();
+    }
+    
+    if (GF_number < 100) {
+        for (int i=0;i<_curDet.size();i++) {
+            if (_curDet[i].first > logdet_th2) {
+                vGFpoints[0].push_back(vPoints[0][_curDet[i].second]);
+                GF_number++;
+            }
+            if (GF_number > 120) {
+                break;
+            }
+        }
+    }
+    last_GF_number = GF_number;
+    // cout<< "GF_number:" << GF_number <<endl;
 
     if (nNumber > 0) {
        computeHomography();
+    }
+}
+
+arma::mat Accelerate::compute_H_subblock_simplied(Mat point_world, Mat Rcw, Mat t, arma::mat & dhu_dhrl) {
+    arma::mat H13, H47, H_meas;
+    
+    dhu_dhrl = { {mvParameters[0]/(point_world.at<float>(2,0)), 0.0, -point_world.at<float>(0,0)*mvParameters[0]/( pow(point_world.at<float>(2,0), 2.0))},
+                 {0.0, mvParameters[1]/(point_world.at<float>(2,0)), -point_world.at<float>(1,0)*mvParameters[1]/( pow(point_world.at<float>(2,0), 2.0))} };  // 雅可比矩阵
+    // cout<< "dhu_dhrl:" <<endl<< dhu_dhrl <<endl;
+    arma::mat dqbar_by_dq;
+    arma::colvec v1;
+    v1 << 1.0 << -1.0 << -1.0 << -1.0 << arma::endr;
+    dqbar_by_dq = arma::diagmat(v1);
+
+    // arma::mat dhu_dhrl = { {4.3610e+2, 0, -1.1766e+02},
+    //                        {0, 4.3481e+02, -2.0851e+02} };
+    // arma::rowvec q_wr = {0.9986, 0.0178, 0.0463, -0.0157};
+    // arma::mat R_rw = { {0.9952, -0.0298, -0.0931},
+    //                    {0.0331, 0.9989, 0.0341},
+    //                    {0.0920, -0.0370, 0.9951} };
+    // arma::rowvec t_rw = {0.3958, 0.4564, 1.0373};
+
+    arma::mat R_rw = { {Rcw.at<float>(0, 0), Rcw.at<float>(0, 1), Rcw.at<float>(0, 2)},
+                       {Rcw.at<float>(1, 0), Rcw.at<float>(1, 1), Rcw.at<float>(1, 2)},
+                       {Rcw.at<float>(2, 0), Rcw.at<float>(2, 1), Rcw.at<float>(2, 2)} };
+    arma::mat R_wr = arma::inv(R_rw);
+    arma::rowvec q_wr = r2q(R_wr);
+
+    arma::rowvec _t = {t.at<float>(0, 0), t.at<float>(1, 0), t.at<float>(2, 0)};
+    arma::rowvec t_rw = (- R_wr * _t.t()).t();
+
+    arma::rowvec qwr_conj = qreset(q_wr);
+
+    H13 = -1.0 * (dhu_dhrl *  R_rw);
+
+    H47 = dhu_dhrl * (dRq_times_by_dq( qwr_conj ,  t_rw) * dqbar_by_dq);
+
+    H_meas = arma::join_horiz(H13, H47);  // 按照水平方向连接两个矩阵
+    return H_meas;
+}
+
+arma::rowvec Accelerate::r2q(arma::mat R) {
+    double trace = R(0, 0) + R(1, 1) + R(2, 2);
+    arma::rowvec Q = {0, 0, 0, 0};
+	if (trace > 0.0)
+	{
+		double s = sqrt(trace + 1.0);
+		Q[3] = (s * 0.5);
+		s = 0.5 / s;
+
+		//主要区别在此，即减数与被减数顺序
+		Q[0] = (((R(2, 1) - R(1, 2))) * s);
+		Q[1] = (((R(0, 2) - R(2, 0))) * s);
+		Q[2] = (((R(1, 0) - R(0, 1))) * s);
+	}
+	else
+	{
+		int i = R(0, 0) < R(1, 1) ? (R(1, 1) < R(2, 2) ? 2 : 1) : (R(0, 0) < R(2, 2) ? 2 : 0);
+		int j = (i + 1) % 3;
+		int k = (i + 2) % 3;
+
+		double s = sqrt(R(i, i) - R(j, j) - R(k, k) + 1.0);
+		Q[i] = s * 0.5;
+		s = 0.5 / s;
+
+		Q[3] = ((R(k, j) - R(j, k))) * s;
+		Q[j] = ((R(j, i) + R(i, j))) * s;
+		Q[k] = ((R(k, i) + R(i, k))) * s;
+	}
+    double x = Q[0];
+    double y = Q[1];
+    double z = Q[2];
+    double r = Q[3];
+    Q[0] = r;
+    Q[1] = x;
+    Q[2] = y;
+    Q[3] = z;
+    return Q;
+}
+
+arma::rowvec Accelerate::qreset(arma::rowvec q) {
+    q = -1.0 * q;
+    q[0] = -q[0];
+    return q;
+}
+
+arma::mat Accelerate::dRq_times_by_dq(arma::rowvec & q,
+                          arma::rowvec & aMat) {
+    double q0 = q[0];
+    double qx = q[1];
+    double qy = q[2];
+    double qz = q[3];
+
+    arma::mat dR_by_dq0(3,3), dR_by_dqx(3,3), dR_by_dqy(3,3), dR_by_dqz(3,3);
+    dR_by_dq0 = { {2.0*q0, -2.0*qz, 2.0*qy},
+                  {2.0*qz, 2.0*q0, -2.0*qx},
+                  {-2.0*qy, 2.0*qx, 2.0*q0} };
+
+    dR_by_dqx = { {2.0*qx, 2.0*qy, 2.0*qz},
+                  {2.0*qy, -2.0*qx, -2.0*q0},
+                  {2.0*qz, 2.0*q0, -2.0*qx} };
+
+    dR_by_dqy = { {-2.0*qy, 2.0*qx, 2.0*q0},
+                  {2.0*qx, 2.0*qy, 2.0*qz},
+                  {-2.0*q0, 2.0*qz, -2.0*qy} };
+
+    dR_by_dqz = { {-2.0*qz, -2.0*q0, 2.0*qx},
+                  {2.0*q0, -2.0*qz, 2.0*qy},
+                  {2.0*qx, 2.0*qy, 2.0*qz} };
+
+    arma::mat RES = arma::zeros<arma::mat>(3,4);
+    RES(arma::span(0,2), arma::span(0,0)) = dR_by_dq0 * aMat.t();
+    RES(arma::span(0,2), arma::span(1,1)) = dR_by_dqx * aMat.t();
+    RES(arma::span(0,2), arma::span(2,2)) = dR_by_dqy * aMat.t();
+    RES(arma::span(0,2), arma::span(3,3)) = dR_by_dqz * aMat.t();
+
+    return RES;
+}
+
+double Accelerate::_logDet(arma::mat M) {
+    arma::cx_double ld_ = arma::log_det(M);
+    return ld_.real();
+}
+
+void Accelerate::ReWeightInfoMat(Frame * F, int & kptIdx, MapPoint * pMP,
+                     arma::mat & H_meas, float & res_u, float & res_v,
+                     arma::mat & H_proj, arma::mat & curMat) {
+    int measSz = H_meas.n_rows;
+    arma::mat Sigma_r(measSz, measSz), W_r(measSz, measSz);
+    Sigma_r.eye();
+    
+    float Sigma2 = F->mvLevelSigma2[F->mvKeys[kptIdx].octave];
+    Sigma_r = Sigma_r * Sigma2;
+    // cout<< "Sigma_r:" <<endl<< Sigma_r <<endl;
+
+    // double stdMapErr = -exp(double(pMP->mnVisible - 1)) * 0.01;
+    double stdMapErr = exp(min(fabs(res_u) + fabs(res_v), float(10.0)));  // 地图点投影误差
+    // cout<< "stdMapErr:" << stdMapErr <<endl;
+    // cout<< "H_proj:" <<endl<< H_proj <<endl;
+    Sigma_r = Sigma_r + H_proj * H_proj.t() * pow(stdMapErr, 2.0);
+    // cout<< "Sigma_r:" <<endl<< Sigma_r <<endl;
+
+    curMat = H_meas.t() * arma::inv(Sigma_r) * H_meas;
+
+    // if (arma::chol(W_r, Sigma_r, "lower") == true) {
+    //     // scale the meas. Jacobian with the scaling block W_r
+    //     // cout<< "W_r:" <<endl<< W_r <<endl;
+    //     H_rw = arma::inv(W_r) * H_meas;
+    // }
+    // else {
+    //     // cout<< "reweight chol fail" <<endl;
+    // }
+}
+
+void Accelerate::compute_Huber_Weight (float residual_, float & weight_) {
+    if (fabs(residual_) > 0.001) {
+        float loss_;
+        compute_Huber_Loss(residual_, loss_);
+        weight_ = sqrt( loss_ ) / residual_;
+    }
+    else {
+        weight_ = 1.0;
+    }
+}
+
+void Accelerate::compute_Huber_Loss (float residual_, float & loss_) {
+    float delta_ = sqrt(5.991);
+
+    if (fabs(residual_) < delta_) {
+        loss_ = pow(residual_, 2);
+    }
+    else {
+        loss_ = 2 * delta_ * fabs(residual_) - pow(delta_, 2);
     }
 }
 
@@ -267,17 +563,17 @@ void Accelerate::computeHomography() {
 
     Mat Image_leftdown = _N.rowRange(0, 3).col(0).clone();
     Image_leftdown.at<float>(0, 0) = 16;
-    Image_leftdown.at<float>(1, 0) = 464;
+    Image_leftdown.at<float>(1, 0) = nImages_height-16;
     Image_leftdown.at<float>(2, 0) = 1;
 
     Mat Image_righttop = _N.rowRange(0, 3).col(0).clone();
-    Image_righttop.at<float>(0, 0) = 736;
+    Image_righttop.at<float>(0, 0) = nImages_width-16;
     Image_righttop.at<float>(1, 0) = 16;
     Image_righttop.at<float>(2, 0) = 1;
 
     Mat Image_rightdown = _N.rowRange(0, 3).col(0).clone();
-    Image_rightdown.at<float>(0, 0) = 736;
-    Image_rightdown.at<float>(1, 0) = 464;
+    Image_rightdown.at<float>(0, 0) = nImages_width-16;
+    Image_rightdown.at<float>(1, 0) = nImages_height-16;
     Image_rightdown.at<float>(2, 0) = 1;
 
     Mat Image_lefttop_project = H * Image_lefttop;
@@ -309,7 +605,9 @@ void Accelerate::computeHomography() {
 
     // string numb = to_string(nNumber);
     // string filename = "/home/kai/file/VO_SpeedUp/Dataset/image_project/" + numb + ".png";
+    // string filename_real = "/home/kai/file/VO_SpeedUp/Dataset/image_project/real_" + numb + ".png";
     // imwrite(filename, mProject);
+    // imwrite(filename_real, mImages);
 }
 
 // 计算均值及方差
@@ -340,7 +638,7 @@ void Accelerate::computeMean() {
         disSum(1) = sqrt(disSum(1) / num);
         fVariance[level] = sqrt(pow(disSum(0), 2) + pow(disSum(1), 2));
 
-        fDistance[level] = sqrt(pow(pfCenter[level].x, 2) + pow(pfCenter[level].y, 2)) + fVariance[level];
+        fDistance[level] = sqrt(pow(pfCenter[level].x, 2) + pow(pfCenter[level].y, 2)) + 2 * fVariance[level];
         if (fDistance[level] > nW) {
             fDistance[level] = nW;
         }
@@ -408,7 +706,7 @@ void Accelerate::computeDensity() {
         }
     }
     density[level] = float(nEar) / (nRows[level] * nCols[level]);
-
+    // cout<< "level:" << level << " density:" << density[level] <<endl;
     // if (density[level] < 0.15) {
     //     for (int r=0;r<nRows[level];r++) {
     //         for (int i=0;i<nCols[level];i++) {
@@ -649,28 +947,6 @@ void Accelerate::addDownEdge(vector<float> node) {
     }
 }
 
-void Accelerate::addDensity() {
-    vStat_out[level].clear();
-    vStat_out[level].resize(vStat[level].size());
-    for (int i=0;i<vStat[level].size();i++) {
-        vStat_out[level][i].assign(vStat[level][i].begin(), vStat[level][i].end());
-    }
-
-    // if (nNumber != 0) {
-    //     for (int r=0;r<vStat_out[level].size();r++) {
-    //         for (int c=0;c<vStat_out[level][r].size();c++) {
-    //             vStat_out[level][r][c] += vStat_pre[level][r][c];
-    //         }
-    //     }
-    // }
-
-    // vStat_pre[level].clear();
-    // vStat_pre[level].resize(vStat[level].size());
-    // for (int i=0;i<vStat[level].size();i++) {
-    //     vStat_pre[level][i].assign(vStat[level][i].begin(), vStat[level][i].end());
-    // }
-}
-
 
 // save project points info and extractor points info
 void Accelerate::saveExtractor(vector<vector<KeyPoint> > allkeypoints) {
@@ -678,22 +954,28 @@ void Accelerate::saveExtractor(vector<vector<KeyPoint> > allkeypoints) {
     cvtColor(mImages, _images, COLOR_GRAY2BGR);
     string numb = to_string(nNumber);
     string filename = "/home/kai/file/VO_SpeedUp/Dataset/feature_extractor/" + numb + ".png";
+
     // 投影特征点
+    for (int i=0;i<vPoints[0].size();i++) {
+        int x = vPoints[0][i].x;
+        int y = vPoints[0][i].y;
+        circle(_images, cvPoint(x,y), 4, Scalar(0, 255, 0), 2, 4, 0);  // 绿色
+    }
+
+    // 优特征点
     for (int i=0;i<vGFpoints[0].size();i++) {
         int x = vGFpoints[0][i].x;
         int y = vGFpoints[0][i].y;
-        int response = vfResponses[i];
-        // putText(_images, to_string(response), cvPoint(x, y-10), FONT_HERSHEY_SIMPLEX, 0.5, CV_RGB(255, 0, 0), 1);
-        circle(_images, cvPoint(x,y), 5, Scalar(0, 0, 255), 2, 4, 0);
+        circle(_images, cvPoint(x,y), 4, Scalar(0, 0, 255), 2, 4, 0);  // 红色
     }
+
     // 提取特征点
     for (int j=0;j<allkeypoints[0].size();j++) {
         int x = allkeypoints[0][j].pt.x;
         int y = allkeypoints[0][j].pt.y;
-        int response = allkeypoints[0][j].response;
-        // putText(_images, to_string(response), cvPoint(x, y-10), FONT_HERSHEY_SIMPLEX, 0.5, CV_RGB(255, 0, 0), 1);
-        circle(_images, cvPoint(x,y), 5, Scalar(0, 255, 0), 2, 4, 0);
+        circle(_images, cvPoint(x,y), 6, Scalar(0, 255, 255), 2, 4, 0);  // 黄色
     }
+
     // 特征提取区域
     for (int i=0;i<nRows[0];i++) {
         float iniY = minBorderY[0] + i * hCell[0];
@@ -705,7 +987,7 @@ void Accelerate::saveExtractor(vector<vector<KeyPoint> > allkeypoints) {
             float maxX = iniX + wCell[0];
             if(maxX>maxBorderX[0])
                 maxX = maxBorderX[0];
-            if (vStat_out[0][i][j] > 0) {
+            if (vStat[0][i][j] > 0) {
                 Point2f pt1;
                 Point2f pt2;
                 pt1.x = iniX;
@@ -716,9 +998,12 @@ void Accelerate::saveExtractor(vector<vector<KeyPoint> > allkeypoints) {
             }
         }
     }
+
     int dens = density[0] * 100;
-    putText(_images, to_string(dens) + "%", cvPoint(0, 470), FONT_HERSHEY_SIMPLEX, 0.75, CV_RGB(255, 0, 0), 1);
-    putText(_images, to_string(nProjectNumber), cvPoint(100, 470), FONT_HERSHEY_SIMPLEX, 0.75, CV_RGB(255, 0, 0), 1);
+    putText(_images, to_string(dens) + "%", cvPoint(0, 470), FONT_HERSHEY_SIMPLEX, 0.75, CV_RGB(0, 255, 0), 1);
+    putText(_images, "All number:" + to_string(nProjectNumber), cvPoint(105, 475), FONT_HERSHEY_SIMPLEX, 0.75, CV_RGB(0, 255, 0), 1);  // 总数量
+    putText(_images, "GF number:" + to_string(GF_number), cvPoint(305, 475), FONT_HERSHEY_SIMPLEX, 0.75, CV_RGB(0, 255, 0), 1);  // 优特征点数量
+    putText(_images, "noGF number:" + to_string(nProjectNumber-GF_number), cvPoint(505, 475), FONT_HERSHEY_SIMPLEX, 0.75, CV_RGB(0, 255, 0), 1);  // 非优特征点数量
     imwrite(filename, _images);
 }
 

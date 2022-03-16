@@ -457,25 +457,25 @@ public:
 
     // Visibility check is needed here, given that the input Xv could be all local map points before data association
     // To cope for the possible prediction error, we increase the visibility range here
-    inline bool compute_H_subblock_simplied (const arma::rowvec & Xv,
-                                             const arma::rowvec & yi,
+    inline bool compute_H_subblock_simplied (const arma::rowvec & Xv,        // 相机的状态
+                                             const arma::rowvec & yi,        // 点的世界坐标
                                              arma::mat & H13, arma::mat & H47,
                                              arma::mat & dhu_dhrl,
                                              const bool check_viz,
                                              float & u, float & v) {
 
         arma::rowvec q_wr = Xv.subvec(3,6);
-        arma::mat R_rw = arma::inv(q2r(q_wr));
-        arma::rowvec t_rw = yi - Xv.subvec(0,2);
+        arma::mat R_rw = arma::inv(q2r(q_wr));  // 旋转矩阵
+        arma::rowvec t_rw = yi - Xv.subvec(0,2);  // 平移 = 世界坐标 - 相机平移
         //    std::cout << "yi = " << yi << "; Xv = " << Xv << "; RelRw = " << RelRw << std::endl;
 
         // dhu_dhrl
         // lmk @ camera coordinate
-        arma::mat hrl = R_rw * t_rw.t();
+        arma::mat hrl = R_rw * t_rw.t();  // hrl 表示点的相机坐标位置
 
         if (hrl(2,0) > 0) {
             u = float(camera.fu) * hrl(0,0)/hrl(2,0) + float(camera.Cx);
-            v = float(camera.fv) * hrl(1,0)/hrl(2,0) + float(camera.Cy);
+            v = float(camera.fv) * hrl(1,0)/hrl(2,0) + float(camera.Cy);  // 点的像素坐标
         }
         else {
             u = FLT_MAX;
@@ -500,11 +500,10 @@ public:
             //        dhu_dhrl << fu/(hrl(2,0))   <<   0.0  <<   -hrl(0,0)*fu/( std::pow(hrl(2,0), 2.0)) << arma::endr
             //                 << 0.0    <<  fv/(hrl(2,0))   <<  -hrl(1,0)*fv/( std::pow(hrl(2,0), 2.0)) << arma::endr;
             dhu_dhrl = { {camera.fu/(hrl(2,0)), 0.0, -hrl(0,0)*camera.fu/( std::pow(hrl(2,0), 2.0))},
-                         {0.0, camera.fv/(hrl(2,0)), -hrl(1,0)*camera.fv/( std::pow(hrl(2,0), 2.0))} };
+                         {0.0, camera.fv/(hrl(2,0)), -hrl(1,0)*camera.fv/( std::pow(hrl(2,0), 2.0))} };  // 雅可比矩阵
         }
 
-        arma::rowvec qwr_conj = qconj(q_wr);
-
+        arma::rowvec qwr_conj = qconj(q_wr);  // 四元素反转
         // H matrix subblock (cols 1~3): H13
         H13 = -1.0 * (dhu_dhrl *  R_rw);
 
@@ -525,7 +524,7 @@ public:
         if (F != NULL && kptIdx >= 0 && kptIdx < F->mvKeysUn.size()) {
 #ifdef WITH_OCT_LEVELED_NOISE
             //
-            float Sigma2 = F->mvLevelSigma2[F->mvKeysUn[kptIdx].octave];
+            float Sigma2 = F->mvLevelSigma2[F->mvKeysUn[kptIdx].octave];  // 金字塔层数的缩放因子
             Sigma_r = Sigma_r * Sigma2;
 #ifdef OBS_DEBUG_VERBOSE
             std::cout << Sigma_r << std::endl;
@@ -544,7 +543,7 @@ public:
 
 #endif
 
-        // cholesky decomp of diagonal-block scaling matrix W
+        // cholesky decomp of diagonal-block scaling matrix W 对角块缩放矩阵 W 的 cholesky decomp
         if (arma::chol(W_r, Sigma_r, "lower") == true) {
             // scale the meas. Jacobian with the scaling block W_r
             H_rw = arma::inv(W_r) * H_meas;

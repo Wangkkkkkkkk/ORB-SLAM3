@@ -2664,7 +2664,7 @@ int ORBmatcher::SearchByProjection(Frame &CurrentFrame, const Frame &LastFrame, 
 
                         if(bestDist<=TH_HIGH)
                         {
-                            pMP->response = CurrentFrame.mvKeysUn[bestIdx2 + CurrentFrame.Nleft].response;  // 特征点响应值保存到地图点
+                            pMP->response = CurrentFrame.mvKeysUn[  + CurrentFrame.Nleft].response;  // 特征点响应值保存到地图点
                             pMP->nMatchs++;
                             CurrentFrame.mvpMapPoints[bestIdx2 + CurrentFrame.Nleft]=pMP;
                             nmatches++;

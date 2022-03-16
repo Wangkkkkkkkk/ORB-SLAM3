@@ -620,7 +620,7 @@ void Observability::batchInfoMat_Map(const size_t start_idx, const size_t end_id
             //            std::cout << "find visible lmk " << i << std::endl;
 
             // assemble into H matrix
-            H_meas = arma::join_horiz(H13, H47);
+            H_meas = arma::join_horiz(H13, H47);  // 按照水平方向连接两个矩阵
 
             // NOTE
             // for RGBD data, assume the depth / disparity will be measured
@@ -1078,9 +1078,10 @@ int Observability::runActiveMapMatching(Frame *pFrame,
                     // TODO
                     // update the info matrix with measurement info, e.g. ocl level, residual
                     float res_u = pFrame->mvKeysUn[bestIdx].pt.x - mMapPoints->at(nIdx)->u_proj,
-                            res_v = pFrame->mvKeysUn[bestIdx].pt.y - mMapPoints->at(nIdx)->v_proj;
+                          res_v = pFrame->mvKeysUn[bestIdx].pt.y - mMapPoints->at(nIdx)->v_proj;  // res_u, res_v 是投影误差
                     //                    pFrame->getProjectError(pFrame->mvpMapPoints[bestIdx], &(pFrame->mvKeysUn[bestIdx]), res_u, res_v);
 
+                    // 雅可比矩阵的加权
                     arma::mat H_rw;
                     reWeightInfoMat( pFrame, bestIdx, mMapPoints->at(nIdx),
                                      mMapPoints->at(nIdx)->H_meas, res_u, res_v,
@@ -1095,7 +1096,7 @@ int Observability::runActiveMapMatching(Frame *pFrame,
                     }
                     else if (mat_type == ORB_SLAM3::FRAME_INFO_MATRIX || mat_type == ORB_SLAM3::MAP_INFO_MATRIX) {
                         //
-                        curMat = curMat + H_rw.t() * H_rw;
+                        curMat = curMat + H_rw.t() * H_rw;  // 信息矩阵的更新
                         responses = heapSubset[nIdx].second;
                     }
                     else {

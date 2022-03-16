@@ -3,21 +3,24 @@
 #--------------------------------------------------------------------------------------------
 # Camera Parameters. Adjust them!
 #--------------------------------------------------------------------------------------------
-Camera.type: "PinHole"
+Camera.type: "KannalaBrandt8"
 
 # Camera calibration and distortion parameters (OpenCV) 
-Camera.fx: 458.654
-Camera.fy: 457.296
-Camera.cx: 367.215
-Camera.cy: 248.375
+Camera.fx: 380.81042871360756 # 190.97847715128717
+Camera.fy: 380.81194179427075 # 190.9733070521226
+Camera.cx: 510.29465304840727 # 254.93170605935475
+Camera.cy: 514.3304630538506 # 256.8974428996504
 
-Camera.k1: -0.28340811
-Camera.k2: 0.07395907
-Camera.p1: 0.00019359
-Camera.p2: 1.76187114e-05
-
-Camera.width: 752
-Camera.height: 480
+# Equidistant distortion 0.0034823894022493434, 0.0007150348452162257, -0.0020532361418706202, 0.00020293673591811182
+# Camera.bFishEye: 1
+Camera.k1: 0.010171079892421483 # 0.0034823894022493434
+Camera.k2: -0.010816440029919381 # 0.0007150348452162257
+Camera.k3: 0.005942781769412756 # -0.0020532361418706202
+Camera.k4: -0.001662284667857643 # 0.00020293673591811182
+    
+# Camera resolution
+Camera.width: 1024
+Camera.height: 1024
 
 # Camera frames per second 
 Camera.fps: 20.0
@@ -30,7 +33,7 @@ Camera.RGB: 1
 #--------------------------------------------------------------------------------------------
 
 # ORB Extractor: Number of features per image
-ORBextractor.nFeatures: 1000
+ORBextractor.nFeatures: 2000 # Tested with 1250
 
 # ORB Extractor: Scale factor between levels in the scale pyramid 	
 ORBextractor.scaleFactor: 1.2
@@ -42,12 +45,14 @@ ORBextractor.nLevels: 8
 # Image is divided in a grid. At each cell FAST are extracted imposing a minimum response.
 # Firstly we impose iniThFAST. If no corners are detected we impose a lower value minThFAST
 # You can lower these values if your images have low contrast			
-ORBextractor.iniThFAST: 20
-ORBextractor.minThFAST: 7
+# ORBextractor.iniThFAST: 20
+# ORBextractor.minThFAST: 7
+ORBextractor.iniThFAST: 20 # 20
+ORBextractor.minThFAST: 7 # 7
 
 #--------------------------------------------------------------------------------------------
 # Viewer Parameters
-#---------------------------------------------------------------------------------------------
+#--------------------------------------------------------------------------------------------
 Viewer.KeyFrameSize: 0.05
 Viewer.KeyFrameLineWidth: 1
 Viewer.GraphLineWidth: 0.9
@@ -56,6 +61,5 @@ Viewer.CameraSize: 0.08
 Viewer.CameraLineWidth: 3
 Viewer.ViewpointX: 0
 Viewer.ViewpointY: -0.7
-Viewer.ViewpointZ: -1.8
+Viewer.ViewpointZ: -3.5 # -1.8
 Viewer.ViewpointF: 500
-
