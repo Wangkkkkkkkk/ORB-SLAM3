@@ -242,13 +242,13 @@ void Accelerate::computeProject() {
                       res_v = mLastFrame->mvKeys[i].pt.y - uv.y;  // res_u, res_v 是投影误差
                 // cout<< "res_u:" << res_u << " res_v:" << res_v <<endl;
 
-                arma::mat curMat;
+                arma::mat H_rw;
                 ReWeightInfoMat(mLastFrame, i, mLastFrame->mvpMapPoints[i],
                                 H_meas, res_u, res_v,
-                                H_proj, curMat);
+                                H_proj, H_rw);
                 // cout<< "curMat:" <<endl<< curMat <<endl;
 
-
+                arma::mat curMat = H_rw.t() * H_rw;
                 double curDet = _logDet(curMat);
                 // cout<< "curDet:" << curDet <<endl;
 
@@ -326,7 +326,7 @@ void Accelerate::computeProject() {
                 vGFpoints[0].push_back(vPoints[0][_curDet[i].second]);
                 GF_number++;
             }
-            if (GF_number > 120) {
+            if (GF_number > 150) {
                 break;
             }
         }
@@ -462,7 +462,7 @@ double Accelerate::_logDet(arma::mat M) {
 
 void Accelerate::ReWeightInfoMat(Frame * F, int & kptIdx, MapPoint * pMP,
                      arma::mat & H_meas, float & res_u, float & res_v,
-                     arma::mat & H_proj, arma::mat & curMat) {
+                     arma::mat & H_proj, arma::mat & H_rw) {
     int measSz = H_meas.n_rows;
     arma::mat Sigma_r(measSz, measSz), W_r(measSz, measSz);
     Sigma_r.eye();
@@ -478,16 +478,14 @@ void Accelerate::ReWeightInfoMat(Frame * F, int & kptIdx, MapPoint * pMP,
     Sigma_r = Sigma_r + H_proj * H_proj.t() * pow(stdMapErr, 2.0);
     // cout<< "Sigma_r:" <<endl<< Sigma_r <<endl;
 
-    curMat = H_meas.t() * arma::inv(Sigma_r) * H_meas;
-
-    // if (arma::chol(W_r, Sigma_r, "lower") == true) {
-    //     // scale the meas. Jacobian with the scaling block W_r
-    //     // cout<< "W_r:" <<endl<< W_r <<endl;
-    //     H_rw = arma::inv(W_r) * H_meas;
-    // }
-    // else {
-    //     // cout<< "reweight chol fail" <<endl;
-    // }
+    if (arma::chol(W_r, Sigma_r, "lower") == true) {
+        // scale the meas. Jacobian with the scaling block W_r
+        // cout<< "W_r:" <<endl<< W_r <<endl;
+        H_rw = arma::inv(W_r) * H_meas;
+    }
+    else {
+        // cout<< "reweight chol fail" <<endl;
+    }
 }
 
 void Accelerate::compute_Huber_Weight (float residual_, float & weight_) {
@@ -952,15 +950,15 @@ void Accelerate::addDownEdge(vector<float> node) {
 void Accelerate::saveExtractor(vector<vector<KeyPoint> > allkeypoints) {
     Mat _images;
     cvtColor(mImages, _images, COLOR_GRAY2BGR);
-    string numb = to_string(nNumber);
+    string numb = to_string(nNumberAll);
     string filename = "/home/kai/file/VO_SpeedUp/Dataset/feature_extractor/" + numb + ".png";
 
     // 投影特征点
-    for (int i=0;i<vPoints[0].size();i++) {
-        int x = vPoints[0][i].x;
-        int y = vPoints[0][i].y;
-        circle(_images, cvPoint(x,y), 4, Scalar(0, 255, 0), 2, 4, 0);  // 绿色
-    }
+    // for (int i=0;i<vPoints[0].size();i++) {
+    //     int x = vPoints[0][i].x;
+    //     int y = vPoints[0][i].y;
+    //     circle(_images, cvPoint(x,y), 4, Scalar(0, 255, 0), 2, 4, 0);  // 绿色
+    // }
 
     // 优特征点
     for (int i=0;i<vGFpoints[0].size();i++) {
@@ -970,11 +968,11 @@ void Accelerate::saveExtractor(vector<vector<KeyPoint> > allkeypoints) {
     }
 
     // 提取特征点
-    for (int j=0;j<allkeypoints[0].size();j++) {
-        int x = allkeypoints[0][j].pt.x;
-        int y = allkeypoints[0][j].pt.y;
-        circle(_images, cvPoint(x,y), 6, Scalar(0, 255, 255), 2, 4, 0);  // 黄色
-    }
+    // for (int j=0;j<allkeypoints[0].size();j++) {
+    //     int x = allkeypoints[0][j].pt.x;
+    //     int y = allkeypoints[0][j].pt.y;
+    //     circle(_images, cvPoint(x,y), 6, Scalar(0, 255, 255), 2, 4, 0);  // 黄色
+    // }
 
     // 特征提取区域
     for (int i=0;i<nRows[0];i++) {
@@ -1000,10 +998,10 @@ void Accelerate::saveExtractor(vector<vector<KeyPoint> > allkeypoints) {
     }
 
     int dens = density[0] * 100;
-    putText(_images, to_string(dens) + "%", cvPoint(0, 470), FONT_HERSHEY_SIMPLEX, 0.75, CV_RGB(0, 255, 0), 1);
-    putText(_images, "All number:" + to_string(nProjectNumber), cvPoint(105, 475), FONT_HERSHEY_SIMPLEX, 0.75, CV_RGB(0, 255, 0), 1);  // 总数量
-    putText(_images, "GF number:" + to_string(GF_number), cvPoint(305, 475), FONT_HERSHEY_SIMPLEX, 0.75, CV_RGB(0, 255, 0), 1);  // 优特征点数量
-    putText(_images, "noGF number:" + to_string(nProjectNumber-GF_number), cvPoint(505, 475), FONT_HERSHEY_SIMPLEX, 0.75, CV_RGB(0, 255, 0), 1);  // 非优特征点数量
+    // putText(_images, to_string(dens) + "%", cvPoint(0, 470), FONT_HERSHEY_SIMPLEX, 0.75, CV_RGB(0, 255, 0), 1);
+    // putText(_images, "All number:" + to_string(nProjectNumber), cvPoint(105, 475), FONT_HERSHEY_SIMPLEX, 0.75, CV_RGB(0, 255, 0), 1);  // 总数量
+    // putText(_images, "GF number:" + to_string(GF_number), cvPoint(305, 475), FONT_HERSHEY_SIMPLEX, 0.75, CV_RGB(0, 255, 0), 1);  // 优特征点数量
+    // putText(_images, "noGF number:" + to_string(nProjectNumber-GF_number), cvPoint(505, 475), FONT_HERSHEY_SIMPLEX, 0.75, CV_RGB(0, 255, 0), 1);  // 非优特征点数量
     imwrite(filename, _images);
 }
 

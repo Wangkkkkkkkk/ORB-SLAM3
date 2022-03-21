@@ -1107,9 +1107,10 @@ void ORBextractor::ComputeKeyPointsOctTree(
         int nFeature_number;
         if (level < 3) {
             nFeature_number = min(mnFeaturesPerLevel[level], int(mnFeaturesPerLevel[level] * Acc_Extractor->density[level] * 1.5));
+            // nFeature_number = mnFeaturesPerLevel[level];
         }
         else {
-            nFeature_number = mnFeaturesPerLevel[level] / 2;
+            nFeature_number = mnFeaturesPerLevel[level] / 1.5;
         }
 
 		//开始遍历图像网格，还是以行开始遍历的

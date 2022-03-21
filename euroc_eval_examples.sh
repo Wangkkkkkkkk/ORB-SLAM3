@@ -94,8 +94,13 @@ pathDatasetTUM_VI='/home/kai/file/VO_SpeedUp/Dataset/TUM_VI'
 # ./Examples/Monocular-Inertial/mono_inertial_euroc ./Vocabulary/ORBvoc.txt ./Examples/Monocular-Inertial/EuRoC.yaml "$pathDatasetEuroc"/V102 ./Examples/Monocular-Inertial/EuRoC_TimeStamps/V102.txt dataset-V102_monoi
 # echo "------------------------------------"
 # echo "Evaluation of V102 trajectory with Monocular-Inertial sensor"
-# python evaluation/evaluate_ate_scale.py "$pathDatasetEuroc"/V102/mav0/state_groundtruth_estimate0/data.csv f_dataset-V102_monoi.txt --plot V102_monoi.pdf
+# python evaluation/evaluate_ate_scale.py "$pathDatasetEuroc"/V102/mav0/state_groundtruth_estimate0/data.csv f_dataset-V102_monoi.txt --plot V102_monoi.pdf --verbose2
 
+# echo "Launching V103 with Monocular-Inertial sensor"
+# ./Examples/Monocular-Inertial/mono_inertial_euroc ./Vocabulary/ORBvoc.txt ./Examples/Monocular-Inertial/EuRoC.yaml "$pathDatasetEuroc"/V103 ./Examples/Monocular-Inertial/EuRoC_TimeStamps/V103.txt dataset-V103_monoi
+# echo "------------------------------------"
+# echo "Evaluation of V103 trajectory with Monocular-Inertial sensor"
+# python evaluation/evaluate_ate_scale.py "$pathDatasetEuroc"/V103/mav0/state_groundtruth_estimate0/data.csv f_dataset-V103_monoi.txt --plot V103_monoi.pdf --verbose2
 
 # # MultiSession Monocular Examples
 
