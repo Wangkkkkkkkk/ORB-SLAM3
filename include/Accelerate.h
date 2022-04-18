@@ -79,6 +79,8 @@ public:
     vector<MapPoint*> mGFMapPoints;
     vector<MapPoint*> mEXMapPoints;
 
+    vector<vector<KeyPoint> > keyPoints;
+
     int nProjectNumber;
     int last_nProjectNumber;
     int GF_number;
@@ -90,6 +92,9 @@ public:
     vector<vector<vector<int> > > vStat;      // 统计矩阵
     vector<vector<vector<int> > > vStat_pre;      // 统计矩阵
     vector<vector<vector<int> > > vStat_out;      // 统计矩阵
+
+    vector<Point2f> vPoints_last;
+    vector<Point2f> vGFpoints_last;
 
     vector<vector<Point2f> > vGFpoints;
     priority_queue<pair<double, int> > curDet_que;
@@ -109,6 +114,8 @@ public:
     vector<Point2f> pfCenter;                // 误差均值
     vector<float> fVariance;               // 误差方差
     vector<float> fDistance;
+
+    vector<float> fDistance_last;
 
     vector<float> density;                 // 提取特征区域密度
 

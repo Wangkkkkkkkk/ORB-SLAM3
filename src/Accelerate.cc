@@ -3,6 +3,7 @@
 */
 
 #include <iostream>
+#include <fstream>
 #include <System.h>
 #include <opencv2/opencv.hpp>
 #include <Accelerate.h>
@@ -41,6 +42,9 @@ Accelerate::Accelerate(int _nlevels, float _factor):
     pfCenter.resize(nlevels);
     fVariance.resize(nlevels);
     fDistance.resize(nlevels);
+    fDistance_last.resize(nlevels);
+
+    keyPoints.resize(nlevels);
 
     density.resize(nlevels);
 
@@ -104,6 +108,8 @@ vector<vector<int> > Accelerate::buildStat(int _nCols, int _nRows, int _wCell, i
     vector<int> vstat(nCols[level]);
     vStat[level].resize(nRows[level],vstat);
 
+    computeMean();
+
     if (GF_number < 100) {
         for (int r=0;r<nRows[level];r++) {
             for (int i=0;i<nCols[level];i++) {
@@ -114,7 +120,7 @@ vector<vector<int> > Accelerate::buildStat(int _nCols, int _nRows, int _wCell, i
         return vStat[level];
     }
 
-    computeMean();
+    
 
     // 根据投影点选择提取特征区域
     for (int i=0;i<vGFpoints[level].size();i++) {
@@ -171,6 +177,8 @@ void Accelerate::computeProject() {
     vPoints[0].clear();
     vGFpoints[0].clear();
     vpDis[0].clear();
+    vPoints_last.clear();
+    vGFpoints_last.clear();
 
     vector<int> Point_index;
     int nAllProject = 0;
@@ -277,7 +285,7 @@ void Accelerate::computeProject() {
                 double mTimeComputeProject3 = chrono::duration_cast<chrono::duration<double, milli> >(time_EndComputeProject3 - time_StartComputeProject3).count();
                 compute_project += mTimeComputeProject3;
 #endif
-
+                vPoints_last.push_back(uv);
                 vPoints[0].push_back(_predict_uv);
                 vpDis[0].push_back(uv - uv_pre);
 
@@ -312,6 +320,7 @@ void Accelerate::computeProject() {
 
         if (_x.first > logdet_th1) {
             vGFpoints[0].push_back(vPoints[0][_x.second]);
+            vGFpoints_last.push_back(vPoints_last[_x.second]);
             GF_number++;
         }
         else {
@@ -324,6 +333,7 @@ void Accelerate::computeProject() {
         for (int i=0;i<_curDet.size();i++) {
             if (_curDet[i].first > logdet_th2) {
                 vGFpoints[0].push_back(vPoints[0][_curDet[i].second]);
+                vGFpoints_last.push_back(vPoints_last[_curDet[i].second]);
                 GF_number++;
             }
             if (GF_number > 150) {
@@ -637,9 +647,11 @@ void Accelerate::computeMean() {
         fVariance[level] = sqrt(pow(disSum(0), 2) + pow(disSum(1), 2));
 
         fDistance[level] = sqrt(pow(pfCenter[level].x, 2) + pow(pfCenter[level].y, 2)) + 2 * fVariance[level];
+        fDistance[level] += fDistance_last[level] / 3;
         if (fDistance[level] > nW) {
             fDistance[level] = nW;
         }
+
     }
     else {
         pfCenter[level] = pfCenter[level-1] / factor;
@@ -949,21 +961,31 @@ void Accelerate::addDownEdge(vector<float> node) {
 // save project points info and extractor points info
 void Accelerate::saveExtractor(vector<vector<KeyPoint> > allkeypoints) {
     Mat _images;
-    cvtColor(mImages, _images, COLOR_GRAY2BGR);
+    // cvtColor(mImages, _images, COLOR_GRAY2BGR);  // 当前帧图像
+    cvtColor(mImagesLast, _images, COLOR_GRAY2BGR);  // 上一帧图像
     string numb = to_string(nNumberAll);
     string filename = "/home/kai/file/VO_SpeedUp/Dataset/feature_extractor/" + numb + ".png";
 
+    // 上一帧提取特征点
+    for (int i=0;i<nlevels;i++) {
+        for (int j=0;j<keyPoints[i].size();j++) {
+            int x = keyPoints[i][j].pt.x * pow(1.2, i);
+            int y = keyPoints[i][j].pt.y * pow(1.2, i);
+            circle(_images, cvPoint(x,y), 6, Scalar(0, 255, 255), 2, 4, 0);  // 黄色
+        }
+    }
+
     // 投影特征点
-    // for (int i=0;i<vPoints[0].size();i++) {
-    //     int x = vPoints[0][i].x;
-    //     int y = vPoints[0][i].y;
-    //     circle(_images, cvPoint(x,y), 4, Scalar(0, 255, 0), 2, 4, 0);  // 绿色
-    // }
+    for (int i=0;i<vPoints_last.size();i++) {
+        int x = vPoints_last[i].x;
+        int y = vPoints_last[i].y;
+        circle(_images, cvPoint(x,y), 4, Scalar(0, 255, 0), 2, 4, 0);  // 绿色
+    }
 
     // 优特征点
-    for (int i=0;i<vGFpoints[0].size();i++) {
-        int x = vGFpoints[0][i].x;
-        int y = vGFpoints[0][i].y;
+    for (int i=0;i<vGFpoints_last.size();i++) {
+        int x = vGFpoints_last[i].x;
+        int y = vGFpoints_last[i].y;
         circle(_images, cvPoint(x,y), 4, Scalar(0, 0, 255), 2, 4, 0);  // 红色
     }
 
@@ -973,35 +995,43 @@ void Accelerate::saveExtractor(vector<vector<KeyPoint> > allkeypoints) {
     //     int y = allkeypoints[0][j].pt.y;
     //     circle(_images, cvPoint(x,y), 6, Scalar(0, 255, 255), 2, 4, 0);  // 黄色
     // }
-
-    // 特征提取区域
-    for (int i=0;i<nRows[0];i++) {
-        float iniY = minBorderY[0] + i * hCell[0];
-        float maxY = iniY + hCell[0];
-        if(maxY>maxBorderY[0])
-            maxY = maxBorderY[0];
-        for (int j=0;j<nCols[0];j++) {
-            float iniX = minBorderX[0] + j * wCell[0];
-            float maxX = iniX + wCell[0];
-            if(maxX>maxBorderX[0])
-                maxX = maxBorderX[0];
-            if (vStat[0][i][j] > 0) {
-                Point2f pt1;
-                Point2f pt2;
-                pt1.x = iniX;
-                pt1.y = iniY;
-                pt2.x = maxX;
-                pt2.y = maxY;
-                rectangle(_images, pt1, pt2, cvScalar(255, 0, 0), 1, 4, 0);
-            }
+    
+    // 复制当前帧特征点
+    for (int i=0;i<nlevels;i++) {
+        keyPoints[i].clear();
+        for (int j=0;j<allkeypoints[i].size();j++) {
+            keyPoints[i].push_back(allkeypoints[i][j]);
         }
     }
 
+    // 特征提取区域
+    // for (int i=0;i<nRows[0];i++) {
+    //     float iniY = minBorderY[0] + i * hCell[0];
+    //     float maxY = iniY + hCell[0];
+    //     if(maxY>maxBorderY[0])
+    //         maxY = maxBorderY[0];
+    //     for (int j=0;j<nCols[0];j++) {
+    //         float iniX = minBorderX[0] + j * wCell[0];
+    //         float maxX = iniX + wCell[0];
+    //         if(maxX>maxBorderX[0])
+    //             maxX = maxBorderX[0];
+    //         if (vStat[0][i][j] > 0) {
+    //             Point2f pt1;
+    //             Point2f pt2;
+    //             pt1.x = iniX;
+    //             pt1.y = iniY;
+    //             pt2.x = maxX;
+    //             pt2.y = maxY;
+    //             rectangle(_images, pt1, pt2, cvScalar(255, 0, 0), 1, 4, 0);
+    //         }
+    //     }
+    // }
+
     int dens = density[0] * 100;
     // putText(_images, to_string(dens) + "%", cvPoint(0, 470), FONT_HERSHEY_SIMPLEX, 0.75, CV_RGB(0, 255, 0), 1);
-    // putText(_images, "All number:" + to_string(nProjectNumber), cvPoint(105, 475), FONT_HERSHEY_SIMPLEX, 0.75, CV_RGB(0, 255, 0), 1);  // 总数量
-    // putText(_images, "GF number:" + to_string(GF_number), cvPoint(305, 475), FONT_HERSHEY_SIMPLEX, 0.75, CV_RGB(0, 255, 0), 1);  // 优特征点数量
-    // putText(_images, "noGF number:" + to_string(nProjectNumber-GF_number), cvPoint(505, 475), FONT_HERSHEY_SIMPLEX, 0.75, CV_RGB(0, 255, 0), 1);  // 非优特征点数量
+    putText(_images, "All number:" + to_string(nProjectNumber), cvPoint(105, 475), FONT_HERSHEY_SIMPLEX, 0.75, CV_RGB(0, 255, 0), 1);  // 总数量
+    putText(_images, "GF number:" + to_string(GF_number), cvPoint(305, 475), FONT_HERSHEY_SIMPLEX, 0.75, CV_RGB(0, 255, 0), 1);  // 优特征点数量
+    putText(_images, "noGF number:" + to_string(nProjectNumber-GF_number), cvPoint(505, 475), FONT_HERSHEY_SIMPLEX, 0.75, CV_RGB(0, 255, 0), 1);  // 非优特征点数量
     imwrite(filename, _images);
 }
 
@@ -1010,6 +1040,14 @@ void Accelerate::save2Ddis() {
 
     string numb = to_string(nNumber);
     string filename = "/home/kai/file/VO_SpeedUp/Dataset/feature_projectDis/" + numb + ".png";
+
+    string txtname = "/home/kai/file/VO_SpeedUp/Dataset/1.txt";
+    ofstream outfile(txtname, ios::app);
+    // outfile.open(txtname, ios::app);
+    double fDis = sqrt(pow(pfCenter[0].x, 2) + pow(pfCenter[0].y, 2)) + fVariance[0];
+    outfile<< fDis << " " << fDistance[0] <<endl;;
+    outfile.close();
+
 
     arrowedLine(img, Point(0, 500), Point(1000, 500), Scalar(0, 0, 0), 2, 8, 0, 0.02);
     arrowedLine(img, Point(500, 0), Point(500, 1000), Scalar(0, 0, 0), 2, 8, 0, 0.02);

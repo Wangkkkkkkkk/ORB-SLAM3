@@ -1229,6 +1229,8 @@ void ORBextractor::ComputeKeyPointsOctTree(
 						   umax);					//以及PATCH的横坐标边界
     // Acc_Extractor->saveExtractor(allKeypoints);        // 将加速提取特征点信息通过图片保存
     // Acc_Extractor->save2Ddis();
+//     Acc_Extractor->fDistance_last.clear();
+//     Acc_Extractor->fDistance_last.assign(Acc_Extractor->fDistance.begin(), Acc_Extractor->fDistance.end());
 }
 
 //计算四叉树的特征点，函数名字后面的OctTree只是说明了在过滤和分配特征点时所使用的方式
