@@ -23,7 +23,7 @@
 # tar -xf ORBvoc.txt.tar.gz
 # cd ..
 
-echo "Configuring and building ORB_SLAM3 ..."
+# echo "Configuring and building ORB_SLAM3 ..."
 
 # mkdir build
 cd build

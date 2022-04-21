@@ -1732,6 +1732,11 @@ static void computeDescriptors(const Mat& image, vector<KeyPoint>& keypoints, Ma
     int ORBextractor::operator()( InputArray _image, InputArray _mask, vector<KeyPoint>& _keypoints,
                                   OutputArray _descriptors, std::vector<int> &vLappingArea, Frame* mPreframe)
     {
+
+#ifdef CUDA_TIME
+        chrono::steady_clock::time_point time_StartORBextractor = chrono::steady_clock::now();
+#endif
+
 	// Step 1 检查图像有效性。如果图像为空，那么就直接返回
         if(_image.empty())
             return -1;
@@ -1740,10 +1745,14 @@ static void computeDescriptors(const Mat& image, vector<KeyPoint>& keypoints, Ma
     Mat image = _image.getMat();
     Acc_Extractor->getImage(image);
 
+#ifdef CUDA_TIME
+        chrono::steady_clock::time_point time_StartORBkeypoint = chrono::steady_clock::now();
+#endif
+
     // 根据投影点聚类特征提取网格
     vector < vector<KeyPoint> > allKeypoints;
     vector<vector<cv::Point2f> > sGFpoints;
-    if (mPreframe != NULL && !mPreframe->mPredictTcw_last.empty() && mPreframe->mnId > 30*5) {
+    if (mPreframe != NULL && !mPreframe->mPredictTcw_last.empty() && mPreframe->mnId > 30*5 && false) {
        //判断图像的格式是否正确，要求是单通道灰度值
         assert(image.type() == CV_8UC1 );
         // 上一帧信息加入加速类
@@ -1782,6 +1791,10 @@ static void computeDescriptors(const Mat& image, vector<KeyPoint>& keypoints, Ma
 	//使用传统的方法提取并平均分配图像的特征点，作者并未使用
     //ComputeKeyPointsOld(allKeypoints);
 
+#ifdef CUDA_TIME
+        chrono::steady_clock::time_point time_EndORBkeypoint = chrono::steady_clock::now();
+        double mTimeORBkeypoint = chrono::duration_cast<chrono::duration<double, milli> >(time_EndORBkeypoint - time_StartORBkeypoint).count();
+#endif
 	
 	// Step 4 拷贝图像描述子到新的矩阵descriptors
     Mat descriptors;
@@ -1808,6 +1821,12 @@ static void computeDescriptors(const Mat& image, vector<KeyPoint>& keypoints, Ma
         descriptors = _descriptors.getMat();
     }
 
+#ifdef CUDA_TIME
+        double mTimeAllGaussianBlur = 0.0;
+        double mTimeAllGaussianBlur_cuda = 0.0;
+        double mTimeAllComputeDescriptors = 0.0;
+#endif
+
         //_keypoints.clear();
         //_keypoints.reserve(nkeypoints);
         _keypoints = vector<cv::KeyPoint>(nkeypoints);
@@ -1829,7 +1848,33 @@ static void computeDescriptors(const Mat& image, vector<KeyPoint>& keypoints, Ma
         // preprocess the resized image 
         //  Step 5 对图像进行高斯模糊
 		// 深拷贝当前金字塔所在层级的图像
+
+        // string filename_Mat = "/home/kai/file/VO_SpeedUp/test_image/Mat.png";
+        // string filename_Mat_cuda = "/home/kai/file/VO_SpeedUp/test_image/Mat_cuda.png";
+        // string filename_Mat_GB = "/home/kai/file/VO_SpeedUp/test_image/Mat_GB.png";
+
         Mat workingMat = mvImagePyramid[level].clone();
+        Mat workingMat_cuda = mvImagePyramid[level].clone();
+        // imwrite(filename_Mat, workingMat);
+
+        // 预分配 VRAM 空间
+
+#ifdef CUDA_TIME
+        chrono::steady_clock::time_point time_StartGaussianBlur_cuda = chrono::steady_clock::now();
+#endif
+
+        // 高斯滤波器kernel为 3 * 3；
+        GaussianBlur_CUDA(workingMat_cuda);
+
+#ifdef CUDA_TIME
+        chrono::steady_clock::time_point time_EndGaussianBlur_cuda = chrono::steady_clock::now();
+        double mTimeGaussianBlur_cuda = chrono::duration_cast<chrono::duration<double, milli> >(time_EndGaussianBlur_cuda - time_StartGaussianBlur_cuda).count();
+        mTimeAllGaussianBlur_cuda += mTimeGaussianBlur_cuda;
+#endif
+
+#ifdef CUDA_TIME
+        chrono::steady_clock::time_point time_StartGaussianBlur = chrono::steady_clock::now();
+#endif
 
 		// 注意：提取特征点的时候，使用的是清晰的原图像；这里计算描述子的时候，为了避免图像噪声的影响，使用了高斯模糊
         GaussianBlur(workingMat, 		//源图像
@@ -1838,6 +1883,19 @@ static void computeDescriptors(const Mat& image, vector<KeyPoint>& keypoints, Ma
 					 2, 				//高斯滤波在x方向的标准差
 					 2, 				//高斯滤波在y方向的标准差
 					 BORDER_REFLECT_101);//边缘拓展点插值类型
+
+        // imwrite(filename_Mat_cuda, workingMat_cuda);
+        // imwrite(filename_Mat_GB, workingMat);
+
+#ifdef CUDA_TIME
+        chrono::steady_clock::time_point time_EndGaussianBlur = chrono::steady_clock::now();
+        double mTimeGaussianBlur = chrono::duration_cast<chrono::duration<double, milli> >(time_EndGaussianBlur - time_StartGaussianBlur).count();
+        mTimeAllGaussianBlur += mTimeGaussianBlur;
+#endif
+
+#ifdef CUDA_TIME
+        chrono::steady_clock::time_point time_StartComputeDescriptors = chrono::steady_clock::now();
+#endif
 
             // Compute the descriptors
 		// desc存储当前图层的描述子
@@ -1848,6 +1906,12 @@ static void computeDescriptors(const Mat& image, vector<KeyPoint>& keypoints, Ma
 						   keypoints, 	//当前图层中的特征点集合
 						   desc, 		//存储计算之后的描述子
 						   pattern);	//随机采样点集
+
+#ifdef CUDA_TIME
+        chrono::steady_clock::time_point time_EndComputeDescriptors = chrono::steady_clock::now();
+        double mTimeComputeDescriptors = chrono::duration_cast<chrono::duration<double, milli> >(time_EndComputeDescriptors - time_StartComputeDescriptors).count();
+        mTimeAllComputeDescriptors += mTimeComputeDescriptors;
+#endif
 
 		// 更新偏移量的值 
         offset += nkeypointsLevel;
@@ -1880,6 +1944,19 @@ static void computeDescriptors(const Mat& image, vector<KeyPoint>& keypoints, Ma
                 i++;
             }
         }
+
+#ifdef CUDA_TIME
+        chrono::steady_clock::time_point time_EndORBextractor = chrono::steady_clock::now();
+        double mTimeORBextractor = chrono::duration_cast<chrono::duration<double, milli> >(time_EndORBextractor - time_StartORBextractor).count();
+
+        cout<< "-----------------------------" <<endl;
+        cout<< "ORBextractor            time:" << mTimeORBextractor <<endl;
+        cout<< "    ORBkeypoint             time:" << mTimeORBkeypoint <<endl;
+        cout<< "    GaussianBlur            time:" << mTimeAllGaussianBlur <<endl;
+        cout<< "    GaussianBlur_cuda       time:" << mTimeAllGaussianBlur_cuda <<endl;
+        cout<< "    ComputeDescriptors      time:" << mTimeAllComputeDescriptors <<endl;
+#endif
+
         // cout << "[ORBextractor]: extracted " << _keypoints.size() << " KeyPoints" << endl;
         return monoIndex;
     }

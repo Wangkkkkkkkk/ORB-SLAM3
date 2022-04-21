@@ -25,7 +25,7 @@
 #include <Accelerate.h>
 
 // #define ACCELERATE_TIME
-
+#define CUDA_TIME
 
 namespace ORB_SLAM3
 {
@@ -64,6 +64,8 @@ public:
                     std::vector<cv::KeyPoint>& _keypoints,
                     cv::OutputArray _descriptors, std::vector<int> &vLappingArea,
                     Frame* mPreframe = static_cast<Frame*>(NULL));
+
+    void GaussianBlur_CUDA(cv::InputArray src);
 
     int inline GetLevels(){
         return nlevels;}
