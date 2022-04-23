@@ -521,7 +521,8 @@ void Tracking::PrintTimeStats()
 
 Tracking::~Tracking()
 {
-
+    // delete mpORBextractorLeft;
+    // delete mpIniORBextractor;
 }
 
 bool Tracking::ParseCamParamFile(cv::FileStorage &fSettings)

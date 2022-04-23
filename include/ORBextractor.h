@@ -25,7 +25,7 @@
 #include <Accelerate.h>
 
 // #define ACCELERATE_TIME
-#define CUDA_TIME
+// #define CUDA_TIME
 
 namespace ORB_SLAM3
 {
@@ -55,7 +55,7 @@ public:
     ORBextractor(int nfeatures, float scaleFactor, int nlevels,
                  int iniThFAST, int minThFAST);
 
-    ~ORBextractor(){}
+    ~ORBextractor();
 
     // Compute the ORB features and descriptors on an image.
     // ORB are dispersed on the image using an octree.
@@ -65,7 +65,11 @@ public:
                     cv::OutputArray _descriptors, std::vector<int> &vLappingArea,
                     Frame* mPreframe = static_cast<Frame*>(NULL));
 
-    void GaussianBlur_CUDA(cv::InputArray src);
+    // CUDA 函数
+    void CUDA_Initial(int _nlevel, float _scaleFactor);
+    void getPyramid(int level, cv::Size sz);
+    void GBandCD_CUDA(cv::InputArray src, int level);
+    void deleteMem();
 
     int inline GetLevels(){
         return nlevels;}
