@@ -1251,6 +1251,11 @@ void ORBextractor::ComputeKeyPointsOctTree(
 	//图像cell的尺寸，是个正方形，可以理解为边长in像素坐标
     const float W = 35;
 
+#ifdef CUDA_TIME
+    double ComputeKP = 0;
+    double ComputeKP_cuda = 0;
+#endif
+
     // 对每一层图像做处理
 	//遍历所有图像
     for (int level = 0; level < nlevels; ++level)
@@ -1275,6 +1280,22 @@ void ORBextractor::ComputeKeyPointsOctTree(
 		//计算每个图像网格所占的像素行数和列数
         const int wCell = ceil(width/nCols);
         const int hCell = ceil(height/nRows);
+
+#ifdef CUDA_TIME
+        chrono::steady_clock::time_point time_StartComputeKP_cuda = chrono::steady_clock::now();
+#endif
+        cv::Mat cuda_Mat = mvImagePyramid[level].clone();
+        ExtractorPoint(cuda_Mat, level, vToDistributeKeys);
+
+#ifdef CUDA_TIME
+        chrono::steady_clock::time_point time_EndComputeKP_cuda = chrono::steady_clock::now();
+        double mTimeComputeKP_cuda = chrono::duration_cast<chrono::duration<double, milli> >(time_EndComputeKP_cuda - time_StartComputeKP_cuda).count();
+        ComputeKP_cuda += mTimeComputeKP_cuda;
+#endif
+
+#ifdef CUDA_TIME
+    chrono::steady_clock::time_point time_StartComputeKP = chrono::steady_clock::now();
+#endif
 
 		//开始遍历图像网格，还是以行开始遍历的
         for(int i=0; i<nRows; i++)
@@ -1347,6 +1368,12 @@ void ORBextractor::ComputeKeyPointsOctTree(
             }//开始遍历图像cell的列
         }//开始遍历图像cell的行
 
+#ifdef CUDA_TIME
+        chrono::steady_clock::time_point time_EndComputeKP = chrono::steady_clock::now();
+        double mTimeComputeKP = chrono::duration_cast<chrono::duration<double, milli> >(time_EndComputeKP - time_StartComputeKP).count();
+        ComputeKP += mTimeComputeKP;
+#endif
+
         //声明一个对当前图层的特征点的容器的引用
         vector<KeyPoint> & keypoints = allKeypoints[level];
 		//并且调整其大小为欲提取出来的特征点个数（当然这里也是扩大了的，因为不可能所有的特征点都是在这一个图层中提取出来的）
@@ -1380,6 +1407,12 @@ void ORBextractor::ComputeKeyPointsOctTree(
             keypoints[i].size = scaledPatchSize;
         }
     }
+
+#ifdef CUDA_TIME
+        cout<< "-----------------------------" <<endl;
+        cout<< "    ComputeKP            time:" << ComputeKP <<endl;
+        cout<< "    ComputeKP_cuda       time:" << ComputeKP_cuda <<endl;
+#endif
 
     // compute orientations
     //然后计算这些特征点的方向信息，注意这里还是分层计算的
@@ -1832,7 +1865,8 @@ static void computeDescriptors(const Mat& image, vector<KeyPoint>& keypoints, Ma
             chrono::steady_clock::time_point time_StartGBandCD_cuda = chrono::steady_clock::now();
 #endif
 
-/*
+#ifdef CUDA_ACC
+
         _keypoints = vector<cv::KeyPoint>(nkeypoints);
         int offset = 0;
         int monoIndex = 0, stereoIndex = nkeypoints-1;
@@ -1851,126 +1885,14 @@ static void computeDescriptors(const Mat& image, vector<KeyPoint>& keypoints, Ma
             // 深拷贝当前金字塔所在层级的图像
 
             // string filename_Mat = "/home/kai/file/VO_SpeedUp/test_image/Mat.png";
-            // string filename_Mat_cuda = "/home/kai/file/VO_SpeedUp/test_image/Mat_cuda.png";
+            // string filename_Mat_cuda = "/home/kai/file/VO_SpeedUp/test_image/Mat_cuda_" + to_string(getIndex()) + ".png";
             // string filename_Mat_GB = "/home/kai/file/VO_SpeedUp/test_image/Mat_GB.png";
 
-            Mat workingMat = mvImagePyramid[level].clone();
             Mat workingMat_cuda = mvImagePyramid[level].clone();
-            // imwrite(filename_Mat, workingMat);
-
-            // 预分配 VRAM 空间
-            getMat(workingMat_cuda);
-
-            // 高斯滤波器kernel为 3 * 3；
-            GaussianBlur_CUDA(workingMat_cuda);
-
-
-            // 注意：提取特征点的时候，使用的是清晰的原图像；这里计算描述子的时候，为了避免图像噪声的影响，使用了高斯模糊
-            GaussianBlur(workingMat, 		//源图像
-                        workingMat, 		//输出图像
-                        Size(7, 7), 		//高斯滤波器kernel大小，必须为正的奇数
-                        2, 				//高斯滤波在x方向的标准差
-                        2, 				//高斯滤波在y方向的标准差
-                        BORDER_REFLECT_101);//边缘拓展点插值类型
-
-            // imwrite(filename_Mat_cuda, workingMat_cuda);
-            // imwrite(filename_Mat_GB, workingMat);
-
-            // Compute the descriptors
-            // desc存储当前图层的描述子
-            //Mat desc = descriptors.rowRange(offset, offset + nkeypointsLevel);
-            Mat desc = cv::Mat(nkeypointsLevel, 32, CV_8U);
-            // Step 6 计算高斯模糊后图像的描述子
-            computeDescriptors(workingMat, 	//高斯模糊之后的图层图像
-                            keypoints, 	//当前图层中的特征点集合
-                            desc, 		//存储计算之后的描述子
-                            pattern);	//随机采样点集
-
-            // 更新偏移量的值 
-            offset += nkeypointsLevel;
-
-            // Scale keypoint coordinates
-            // Step 6 对非第0层图像中的特征点的坐标恢复到第0层图像（原图像）的坐标系下
-            // ? 得到所有层特征点在第0层里的坐标放到_keypoints里面
-            // 对于第0层的图像特征点，他们的坐标就不需要再进行恢复了
-            float scale = mvScaleFactor[level]; //getScale(level, firstLevel, scaleFactor);
-            int i = 0;
-            for (vector<KeyPoint>::iterator keypoint = keypoints.begin(),
-                         keypointEnd = keypoints.end(); keypoint != keypointEnd; ++keypoint){
-
-                // Scale keypoint coordinates
-                if (level != 0){
-					// 特征点本身直接乘缩放倍数就可以了
-                    keypoint->pt *= scale;
-                }
-                // ?TODO vLappingArea 
-                if(keypoint->pt.x >= vLappingArea[0] && keypoint->pt.x <= vLappingArea[1]){
-                    _keypoints.at(stereoIndex) = (*keypoint);
-                    desc.row(i).copyTo(descriptors.row(stereoIndex));
-                    stereoIndex--;
-                }
-                else{
-                    _keypoints.at(monoIndex) = (*keypoint);
-                    desc.row(i).copyTo(descriptors.row(monoIndex));
-                    monoIndex++;
-                }
-                i++;
-            }
-        }
-*/
-
-#ifdef CUDA_TIME
-        chrono::steady_clock::time_point time_EndGBandCD_cuda = chrono::steady_clock::now();
-        double mTimeGBandCD_cuda = chrono::duration_cast<chrono::duration<double, milli> >(time_EndGBandCD_cuda - time_StartGBandCD_cuda).count();
-#endif
-
-
-#ifdef CUDA_TIME
-            chrono::steady_clock::time_point time_StartGBandCD = chrono::steady_clock::now();
-#endif
-
-        //_keypoints.clear();
-        //_keypoints.reserve(nkeypoints);
-        _keypoints = vector<cv::KeyPoint>(nkeypoints);
-	    //因为遍历是一层一层进行的，但是描述子那个矩阵是存储整个图像金字塔中特征点的描述子，所以在这里设置了Offset变量来保存“寻址”时的偏移量，
-	    //辅助进行在总描述子mat中的定位
-        int offset = 0;
-        //Modified for speeding up stereo fisheye matching
-        int monoIndex = 0, stereoIndex = nkeypoints-1;
-        for (int level = 0; level < nlevels; ++level)
-        {
-            //获取在allKeypoints中当前层特征点容器的句柄
-                vector<KeyPoint>& keypoints = allKeypoints[level];
-            //本层的特征点数
-                int nkeypointsLevel = (int)keypoints.size();
-
-                if(nkeypointsLevel==0)
-                    continue;
-
-            // preprocess the resized image 
-            //  Step 5 对图像进行高斯模糊
-            // 深拷贝当前金字塔所在层级的图像
-
-            // string filename_Mat = "/home/kai/file/VO_SpeedUp/test_image/Mat.png";
-            // string filename_Mat_cuda = "/home/kai/file/VO_SpeedUp/test_image/Mat_cuda.png";
-            // string filename_Mat_GB = "/home/kai/file/VO_SpeedUp/test_image/Mat_GB.png";
-
-            Mat workingMat = mvImagePyramid[level].clone();
-            Mat workingMat_cuda = mvImagePyramid[level].clone();
-
             // imwrite(filename_Mat, workingMat);
 
             // 高斯滤波器kernel为 3 * 3；
             GBandCD_CUDA(workingMat_cuda, level);
-
-
-            // 注意：提取特征点的时候，使用的是清晰的原图像；这里计算描述子的时候，为了避免图像噪声的影响，使用了高斯模糊
-            // GaussianBlur(workingMat, 		//源图像
-            //             workingMat, 		//输出图像
-            //             Size(7, 7), 		//高斯滤波器kernel大小，必须为正的奇数
-            //             2, 				//高斯滤波在x方向的标准差
-            //             2, 				//高斯滤波在y方向的标准差
-            //             BORDER_REFLECT_101);//边缘拓展点插值类型
 
             // imwrite(filename_Mat_cuda, workingMat_cuda);
             // imwrite(filename_Mat_GB, workingMat);
@@ -2016,19 +1938,97 @@ static void computeDescriptors(const Mat& image, vector<KeyPoint>& keypoints, Ma
                 i++;
             }
         }
+#else
+
+        //_keypoints.clear();
+        //_keypoints.reserve(nkeypoints);
+        _keypoints = vector<cv::KeyPoint>(nkeypoints);
+	    //因为遍历是一层一层进行的，但是描述子那个矩阵是存储整个图像金字塔中特征点的描述子，所以在这里设置了Offset变量来保存“寻址”时的偏移量，
+	    //辅助进行在总描述子mat中的定位
+        int offset = 0;
+        //Modified for speeding up stereo fisheye matching
+        int monoIndex = 0, stereoIndex = nkeypoints-1;
+        for (int level = 0; level < nlevels; ++level)
+        {
+            //获取在allKeypoints中当前层特征点容器的句柄
+                vector<KeyPoint>& keypoints = allKeypoints[level];
+            //本层的特征点数
+                int nkeypointsLevel = (int)keypoints.size();
+
+                if(nkeypointsLevel==0)
+                    continue;
+
+            // preprocess the resized image 
+            //  Step 5 对图像进行高斯模糊
+            // 深拷贝当前金字塔所在层级的图像
+
+            Mat workingMat = mvImagePyramid[level].clone();
+
+            // 注意：提取特征点的时候，使用的是清晰的原图像；这里计算描述子的时候，为了避免图像噪声的影响，使用了高斯模糊
+            GaussianBlur(workingMat, 		//源图像
+                        workingMat, 		//输出图像
+                        Size(7, 7), 		//高斯滤波器kernel大小，必须为正的奇数
+                        2, 				//高斯滤波在x方向的标准差
+                        2, 				//高斯滤波在y方向的标准差
+                        BORDER_REFLECT_101);//边缘拓展点插值类型
+
+
+            // Compute the descriptors
+            // desc存储当前图层的描述子
+            //Mat desc = descriptors.rowRange(offset, offset + nkeypointsLevel);
+            Mat desc = cv::Mat(nkeypointsLevel, 32, CV_8U);
+            // Step 6 计算高斯模糊后图像的描述子
+            computeDescriptors(workingMat, 	//高斯模糊之后的图层图像
+                            keypoints, 	//当前图层中的特征点集合
+                            desc, 		//存储计算之后的描述子
+                            pattern);	//随机采样点集
+
+            // 更新偏移量的值 
+            offset += nkeypointsLevel;
+
+            // Scale keypoint coordinates
+            // Step 6 对非第0层图像中的特征点的坐标恢复到第0层图像（原图像）的坐标系下
+            // ? 得到所有层特征点在第0层里的坐标放到_keypoints里面
+            // 对于第0层的图像特征点，他们的坐标就不需要再进行恢复了
+            float scale = mvScaleFactor[level]; //getScale(level, firstLevel, scaleFactor);
+            int i = 0;
+            for (vector<KeyPoint>::iterator keypoint = keypoints.begin(),
+                         keypointEnd = keypoints.end(); keypoint != keypointEnd; ++keypoint){
+
+                // Scale keypoint coordinates
+                if (level != 0){
+					// 特征点本身直接乘缩放倍数就可以了
+                    keypoint->pt *= scale;
+                }
+                // ?TODO vLappingArea 
+                if(keypoint->pt.x >= vLappingArea[0] && keypoint->pt.x <= vLappingArea[1]){
+                    _keypoints.at(stereoIndex) = (*keypoint);
+                    desc.row(i).copyTo(descriptors.row(stereoIndex));
+                    stereoIndex--;
+                }
+                else{
+                    _keypoints.at(monoIndex) = (*keypoint);
+                    desc.row(i).copyTo(descriptors.row(monoIndex));
+                    monoIndex++;
+                }
+                i++;
+            }
+        }
+#endif
+
 
 #ifdef CUDA_TIME
         chrono::steady_clock::time_point time_EndORBextractor = chrono::steady_clock::now();
         double mTimeORBextractor = chrono::duration_cast<chrono::duration<double, milli> >(time_EndORBextractor - time_StartORBextractor).count();
         
         chrono::steady_clock::time_point time_EndGBandCD = chrono::steady_clock::now();
-        double mTimeGBandCD = chrono::duration_cast<chrono::duration<double, milli> >(time_EndGBandCD - time_StartGBandCD).count();
+        // double mTimeGBandCD = chrono::duration_cast<chrono::duration<double, milli> >(time_EndGBandCD - time_StartGBandCD).count();
 
-        cout<< "-----------------------------" <<endl;
-        cout<< "ORBextractor           time:" << mTimeORBextractor <<endl;
-        cout<< "    ORBkeypoint        time:" << mTimeORBkeypoint <<endl;
-        cout<< "    GBandCD            time:" << mTimeGBandCD <<endl;
-        cout<< "    GBandCD_cuda       time:" << mTimeGBandCD_cuda <<endl;
+        // cout<< "-----------------------------" <<endl;
+        // cout<< "ORBextractor           time:" << mTimeORBextractor <<endl;
+        // cout<< "    ORBkeypoint        time:" << mTimeORBkeypoint <<endl;
+        // cout<< "    GBandCD            time:" << mTimeGBandCD <<endl;
+        // cout<< "    GBandCD_cuda       time:" << mTimeGBandCD_cuda <<endl;
 #endif
 
         // cout << "[ORBextractor]: extracted " << _keypoints.size() << " KeyPoints" << endl;
@@ -2048,7 +2048,7 @@ static void computeDescriptors(const Mat& image, vector<KeyPoint>& keypoints, Ma
             Mat temp(wholeSize, image.type()), masktemp;
             mvImagePyramid[level] = temp(Rect(EDGE_THRESHOLD, EDGE_THRESHOLD, sz.width, sz.height));
 
-            getPyramid(level, sz);
+            
 
             // Compute the resized image
             //计算第0层以上resize后的图像
@@ -2073,7 +2073,9 @@ static void computeDescriptors(const Mat& image, vector<KeyPoint>& keypoints, Ma
                     0, 						//水平方向上的缩放系数，留0表示自动计算
                     0,  						//垂直方向上的缩放系数，留0表示自动计算
                     cv::INTER_LINEAR);		//图像缩放的差值算法类型，这里的是线性插值算法
-		
+
+		        getPyramid(mvImagePyramid[level], level);
+
                 copyMakeBorder(mvImagePyramid[level], 					//源图像
                             temp, 									//目标图像（此时其实就已经有大了一圈的尺寸了）
                             EDGE_THRESHOLD, EDGE_THRESHOLD, 			//top & bottom 需要扩展的border大小
@@ -2082,6 +2084,8 @@ static void computeDescriptors(const Mat& image, vector<KeyPoint>& keypoints, Ma
             }
             else
             {
+                getPyramid(image, level);
+
                 copyMakeBorder(image,
                             temp, EDGE_THRESHOLD, EDGE_THRESHOLD, EDGE_THRESHOLD, EDGE_THRESHOLD,
                             BORDER_REFLECT_101);
@@ -2099,8 +2103,6 @@ static void computeDescriptors(const Mat& image, vector<KeyPoint>& keypoints, Ma
             Mat temp(wholeSize, image.type()), masktemp;
             mvImagePyramid[level] = temp(Rect(EDGE_THRESHOLD, EDGE_THRESHOLD, sz.width, sz.height));
 
-            getPyramid(level, sz);
-
             // Compute the resized image
             //计算第0层以上resize后的图像
             if( level != 0 )
@@ -2112,6 +2114,8 @@ static void computeDescriptors(const Mat& image, vector<KeyPoint>& keypoints, Ma
                     0, 						//水平方向上的缩放系数，留0表示自动计算
                     0,  						//垂直方向上的缩放系数，留0表示自动计算
                     cv::INTER_LINEAR);		//图像缩放的差值算法类型，这里的是线性插值算法
+
+                getPyramid(mvImagePyramid[level], level);
 
                 //把源图像拷贝到目的图像的中央，四面填充指定的像素。图片如果已经拷贝到中间，只填充边界
                 //TODO 貌似这样做是因为在计算描述子前，进行高斯滤波的时候，图像边界会导致一些问题，说不明白
@@ -2136,6 +2140,8 @@ static void computeDescriptors(const Mat& image, vector<KeyPoint>& keypoints, Ma
             }
             else
             {
+                getPyramid(image, level);
+
                 //对于底层图像，直接就扩充边界了
                 //?temp 是在循环内部新定义的，在该函数里又作为输出，并没有使用啊！
                 copyMakeBorder(image,			//这里是原图像

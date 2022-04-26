@@ -25,7 +25,8 @@
 #include <Accelerate.h>
 
 // #define ACCELERATE_TIME
-// #define CUDA_TIME
+#define CUDA_TIME
+#define CUDA_ACC
 
 namespace ORB_SLAM3
 {
@@ -67,8 +68,10 @@ public:
 
     // CUDA 函数
     void CUDA_Initial(int _nlevel, float _scaleFactor);
-    void getPyramid(int level, cv::Size sz);
-    void GBandCD_CUDA(cv::InputArray src, int level);
+    int getIndex();
+    void getPyramid(cv::InputArray image, int level);
+    void GBandCD_CUDA(cv::InputArray image, int level);
+    void ExtractorPoint(cv::InputArray image, int level, vector<cv::KeyPoint> &vKeys);
     void deleteMem();
 
     int inline GetLevels(){
