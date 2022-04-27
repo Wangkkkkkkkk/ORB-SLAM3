@@ -72,6 +72,9 @@ public:
     void getPyramid(cv::InputArray image, int level);
     void GBandCD_CUDA(cv::InputArray image, int level);
     void ExtractorPoint(cv::InputArray image, int level, vector<cv::KeyPoint> &vKeys);
+    void ExtractorPointGrid(cv::InputArray image, int level, vector<cv::KeyPoint> &vKeys,
+                            int minBorderX, int minBorderY, int maxBorderX, int maxBorderY,
+                            int nCols, int nRows, int wCell, int hCell);
     void deleteMem();
 
     int inline GetLevels(){

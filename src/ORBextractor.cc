@@ -751,7 +751,7 @@ vector<cv::KeyPoint> ORBextractor::DistributeOctTree(const vector<cv::KeyPoint>&
 		//按特征点的横轴位置，分配给属于那个图像区域的提取器节点（最初的提取器节点）
         vpIniNodes[kp.pt.x/hX]->vKeys.push_back(kp);
     }
-    
+
 	// Step 4 遍历此提取器节点列表，标记那些不可再分裂的节点，删除那些没有分配到特征点的节点
     // ? 这个步骤是必要的吗？感觉可以省略，通过判断nIni个数和vKeys.size() 就可以吧
     list<ExtractorNode>::iterator lit = lNodes.begin();
@@ -1286,6 +1286,9 @@ void ORBextractor::ComputeKeyPointsOctTree(
 #endif
         cv::Mat cuda_Mat = mvImagePyramid[level].clone();
         ExtractorPoint(cuda_Mat, level, vToDistributeKeys);
+        // cout<< "key points number: " << vToDistributeKeys.size() <<endl;
+
+        // ExtractorPointGrid(cuda_Mat, level, vToDistributeKeys, minBorderX, minBorderY, maxBorderX, maxBorderY, nCols, nRows, wCell, hCell);
 
 #ifdef CUDA_TIME
         chrono::steady_clock::time_point time_EndComputeKP_cuda = chrono::steady_clock::now();
@@ -1297,6 +1300,7 @@ void ORBextractor::ComputeKeyPointsOctTree(
     chrono::steady_clock::time_point time_StartComputeKP = chrono::steady_clock::now();
 #endif
 
+/*
 		//开始遍历图像网格，还是以行开始遍历的
         for(int i=0; i<nRows; i++)
         {
@@ -1367,6 +1371,7 @@ void ORBextractor::ComputeKeyPointsOctTree(
                 }//当图像cell中检测到FAST角点的时候执行下面的语句
             }//开始遍历图像cell的列
         }//开始遍历图像cell的行
+*/
 
 #ifdef CUDA_TIME
         chrono::steady_clock::time_point time_EndComputeKP = chrono::steady_clock::now();
@@ -1409,9 +1414,9 @@ void ORBextractor::ComputeKeyPointsOctTree(
     }
 
 #ifdef CUDA_TIME
-        cout<< "-----------------------------" <<endl;
-        cout<< "    ComputeKP            time:" << ComputeKP <<endl;
-        cout<< "    ComputeKP_cuda       time:" << ComputeKP_cuda <<endl;
+        // cout<< "-----------------------------" <<endl;
+        // cout<< "    ComputeKP            time:" << ComputeKP <<endl;
+        // cout<< "    ComputeKP_cuda       time:" << ComputeKP_cuda <<endl;
 #endif
 
     // compute orientations

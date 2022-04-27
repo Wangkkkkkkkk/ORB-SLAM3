@@ -6,6 +6,7 @@
 #include "opencv2/opencv.hpp"
 #include "opencv2/core/cuda.hpp"
 #include "opencv2/core/cuda_stream_accessor.hpp"
+#include <opencv2/features2d/features2d.hpp>
 
 #include <thrust/host_vector.h>
 #include <thrust/device_vector.h>
@@ -75,7 +76,7 @@ __global__ void gray_gaussian_filtering(uchar1* img, uchar1* dst, int width, int
 // }
 
 // 使用类Fast 9-16 角点计算方法,检查该点是否通过 FAST 的筛选标准
-__device__ bool fast_check(uchar1* img, const int idx, const int idy, const float radius, const int threshold, int width, int height)
+__device__ bool fast_check(uchar1* img, const short idx, const short idy, const float radius, const int threshold, int width, int height)
 {
     uchar v = img[idy * width + idx].x; // 读取判定点的灰度值
     // printf("idx: %d idy: %d width: %d\n", idx, idy, width);
@@ -111,6 +112,60 @@ __device__ bool fast_check(uchar1* img, const int idx, const int idy, const floa
     return true;
 }
 
+__device__ int fast_detect_16(uchar1* img, const short idx, const short idy, const int threshold, int width, int height)
+{
+    uchar v = img[idy * width + idx].x; // 读取判定点的灰度值
+
+    int radiu = 3;
+    uchar c[16];
+    
+    c[0] = img[(idy - radiu) * width + idx].x;
+    c[4] = img[idy * width + idx + radiu].x;
+    c[8] = img[(idy + radiu) * width + idx].x;
+    c[12] = img[idy * width + idx - radiu].x;
+
+    uchar num = 0;
+    for (int i=0;i<4;i++) {
+        uchar ind = i * 4;
+        uchar values = abs(c[ind] - v);
+        if (values > threshold) {
+            num++;
+        }
+    }
+    if (num < 3) {
+        return -1;
+    }
+
+    c[1] = img[(idy - radiu) * width + idx + radiu - 2].x;
+    c[2] = img[(idy - radiu + 1) * width + idx + radiu - 1].x;
+    c[3] = img[(idy - radiu + 2) * width + idx + radiu].x;
+    c[5] = img[(idy + radiu - 2) * width + idx + radiu].x;
+    c[6] = img[(idy + radiu - 1) * width + idx + radiu - 1].x;
+    c[7] = img[(idy + radiu) * width + idx + radiu - 2].x;
+    c[9] = img[(idy + radiu) * width + idx - radiu + 2].x;
+    c[10] = img[(idy + radiu - 1) * width + idx - radiu + 1].x;
+    c[11] = img[(idy + radiu - 2) * width + idx - radiu].x;
+    c[13] = img[(idy - radiu + 2) * width + idx - radiu].x;
+    c[14] = img[(idy - radiu + 1) * width + idx - radiu + 1].x;
+    c[15] = img[(idy - radiu) * width + idx - radiu + 2].x;
+
+    num = 0;
+    int response = 0;
+    for (int i=0;i<16;i++) {
+        uchar values = abs(c[i] - v);
+        if (values > threshold) {
+            num++;
+        }
+        response += values;
+    }
+    if (num >= 12) {
+        return response;
+    }
+    else {
+        return -1;
+    }
+}
+
 // Harris Response计算
 #define HARRIES_RADIUS 3
 #define GAUSSIAN_SIGMA2 0.64f
@@ -143,35 +198,76 @@ __device__ float harris_response(uchar1* img, const int idx, const int idy, cons
     return score * 1e-9;
 }
 
-__global__ void fast_detect(uchar1* img, const int threshold, int *dev_counter,
-                            ushort2 *kptsLoc2D,
-                            int width, int height) 
+__global__ void fast(uchar1* img, const int threshold, int *dev_counter,
+                        ushort3 *kptsLoc2D, uchar1* score_mat,
+                        int width, int height) 
 {
-    const int idx = blockIdx.x * blockDim.x + threadIdx.x + 16;
-    const int idy = blockIdx.y * blockDim.y + threadIdx.y + 16;
+    const ushort idx = blockIdx.x * blockDim.x + threadIdx.x + 16;
+    const ushort idy = blockIdx.y * blockDim.y + threadIdx.y + 16;
 
     if (idx < width - 16 && idy < height - 16)
     {
         // 检查是否通过 Fast 角点的收录标准
-        for (int i = 0; i < 3; i++)
+        int response = fast_detect_16(img, idx, idy, threshold, width, height);
+        if (response > 0)
         {
-            float curr_scale = pow(1.2, i);
-            bool flag_corner = fast_check(img, idx, idy, 4 * curr_scale, threshold, width, height);
-            if (flag_corner == true)
+            int pIdx = atomicAdd(dev_counter, 1);
+            if (pIdx < 10000)
             {
-                // 计算该点的 Harris Response,作非极大抑制
-                float response = harris_response(img, idx, idy, curr_scale, width, height);
-                if (response >= 1)
-                {
-                    int pIdx = atomicAdd(dev_counter, 1);
-                    if (pIdx < 50000)
-                    {
-                        kptsLoc2D[pIdx] = {idx, idy};
-                        // scoreMat(idy, idx) = response;
-                        break;
-                    }
-                }
+                kptsLoc2D[pIdx] = {idx, idy, response};
+                score_mat[idy * width + idx].x = response;
             }
+        }
+    }
+}
+
+__global__ void fast_grid(uchar1* img, int iniY, int maxY, int iniX, int maxX,
+                            const int threshold, int *dev_counter,
+                            ushort3 *kpts, uchar1* score_mat,
+                            int width, int height) 
+{
+    const ushort idx = blockIdx.x * blockDim.x + threadIdx.x + iniX;
+    const ushort idy = blockIdx.y * blockDim.y + threadIdx.y + iniY;
+
+    if (idx < maxX && idy < maxY)
+    {
+        // 检查是否通过 Fast 角点的收录标准
+        int response = fast_detect_16(img, idx, idy, threshold, width, height);
+        if (response > 0)
+        {
+            int pIdx = atomicAdd(dev_counter, 1);
+            if (pIdx < 50000)
+            {
+                kpts[pIdx] = {idx, idy, response};
+                score_mat[idy * width + idx].x = response;
+            }
+        }
+    }
+}
+
+#define NM_RADIUS 3 // 非极大抑制范围 Radius
+// 非极大抑制，剔除部分 Edge 点(negtive)，同时保存特征点的三维位置信息
+__global__ void nonmaxSuppression(ushort3* kptsLoc2D, int kpt_num,
+                                  uchar1* scoreMat, int* dev_counter,
+                                  ushort3* frame_kpts,
+                                  int width, int height)
+{
+    const short kpIdx = threadIdx.x + blockIdx.x * blockDim.x;
+    if (kpIdx < kpt_num)
+    {
+        ushort3 loc = kptsLoc2D[kpIdx];
+        int score = scoreMat[loc.y * width + loc.x].x;
+
+        for (int i = -NM_RADIUS; i <= NM_RADIUS; i++)
+            for (int j = -NM_RADIUS; j <= NM_RADIUS; j++)
+                if (score < scoreMat[(loc.y + i) * width + loc.x + j].x)
+                    return;
+
+        int idx = atomicAdd(dev_counter, 1);
+        // 写入特征点图像坐标，三维空间坐标
+        if (idx < 50000)
+        {
+            frame_kpts[idx] = loc;
         }
     }
 }
@@ -271,41 +367,172 @@ void ORB_SLAM3::ORBextractor::GBandCD_CUDA(cv::InputArray image, int level)
 void ORB_SLAM3::ORBextractor::ExtractorPoint(cv::InputArray image, int level, vector<cv::KeyPoint> &vKeys)
 {
     cv::Mat src = image.getMat();
-    // cout<< "src:" << src.type() <<endl;
-    // cout<< "src[16][16]: " << int(src.at<uchar>(16, 16)) <<endl;
+    int Rows = src.rows;
+    int Cols = src.cols;
 
     // size_t memSize = src.cols * src.rows * sizeof(uchar1);
     // uchar1* d_src;
     // cudaMalloc((void**)&d_src, memSize);
     // cudaMemcpy(d_src, src.data, memSize, cudaMemcpyHostToDevice);
 
+    int iniThFAST = 25;
+    int *dev_counter;
+    cudaMalloc((void**)&dev_counter, sizeof(int));
+    cudaMemset(dev_counter, 0, sizeof(int));
+
+    ushort3* Keys;
+    size_t memSizes = 50000 * sizeof(ushort3);
+    cudaMalloc((void**)&Keys, memSizes);
+
+    size_t memSize = Cols * Rows * sizeof(uchar1);
+    cudaMemcpy(d_srcs[level], src.data, memSize, cudaMemcpyHostToDevice);
+
+    uchar1* score_mat;
+    cudaMalloc((void**)&score_mat, memSize);
+    cudaMemset(score_mat, 0, memSize);
+
+    dim3 block(16, 16);
+    dim3 grid(divUp(Cols - 2*16, block.x),
+              divUp(Rows - 2*16, block.y));
+    fast<<<grid, block>>>(d_srcs[level], iniThFAST, dev_counter, Keys, score_mat, Cols, Rows);
+
+    int* n;
+    n = (int*)malloc(sizeof(int));
+    cudaMemcpy(n, dev_counter, sizeof(int), cudaMemcpyDeviceToHost);
+    cout<< "fast KeyPoint num: " << *n <<endl;
+    *n = min(*n, 50000);
+
+    int *kp_counter;
+    cudaMalloc((void**)&kp_counter, sizeof(int));
+    cudaMemset(kp_counter, 0, sizeof(int));
+
+    ushort3* KeyPoints;
+    cudaMalloc((void**)&KeyPoints, memSizes);
+
+    dim3 block_nm(64);
+    dim3 grid_nm(divUp(*n, block_nm.x));
+    nonmaxSuppression<<<grid_nm, block_nm>>>(Keys, *n, score_mat, kp_counter, KeyPoints, Cols, Rows);
+
+    int* num;
+    num = (int*)malloc(sizeof(int));
+    cudaMemcpy(num, kp_counter, sizeof(int), cudaMemcpyDeviceToHost);
+    cout<< "nonmax KeyPoint num: " << *num <<endl;
+
+    *num = min(*num, 50000);
+    ushort3* kptsLoc = (ushort3*)malloc(*num * sizeof(ushort3));
+    cudaMemcpy(kptsLoc, KeyPoints, *num * sizeof(ushort3), cudaMemcpyDeviceToHost);
+
+    for (int pidx = 0; pidx < *num; pidx++)
+    {
+        cv::KeyPoint kp;
+        kp.pt.x = kptsLoc[pidx].x - 16;
+        kp.pt.y = kptsLoc[pidx].y - 16;
+        kp.response = kptsLoc[pidx].z;
+        kp.octave = level;
+        kp.size = 0;
+        vKeys.push_back(kp);
+
+        // cv::Scalar color(0, 255, 0);
+        // cv::circle(src, pt, 3, color);
+    }
+
+    // cv::imshow("color coarse fast ", src);
+    // cv::waitKey();
+
+    // cudaThreadSynchronize();
+
+    cudaFree(dev_counter);
+    cudaFree(kp_counter);
+    cudaFree(Keys);
+    cudaFree(score_mat);
+    cudaFree(KeyPoints);
+
+    free(kptsLoc);
+    free(n);
+    free(num);
+}
+
+void ORB_SLAM3::ORBextractor::ExtractorPointGrid(cv::InputArray image, int level, vector<cv::KeyPoint> &vKeys,
+                                                int minBorderX, int minBorderY, int maxBorderX, int maxBorderY,
+                                                int nCols, int nRows, int wCell, int hCell)
+{
+    cv::Mat src = image.getMat();
+
     int iniThFAST = 50;
     int *dev_counter;
     cudaMalloc((void**)&dev_counter, sizeof(int));
     cudaMemset(dev_counter, 0, sizeof(int));
 
-    ushort2* Keys;
-    size_t memSizes = 50000 * sizeof(ushort2);
+    ushort3* Keys;
+    size_t memSizes = 10000 * sizeof(ushort3);
     cudaMalloc((void**)&Keys, memSizes);
 
     size_t memSize = src.cols * src.rows * sizeof(uchar1);
     cudaMemcpy(d_srcs[level], src.data, memSize, cudaMemcpyHostToDevice);
 
-    dim3 block(16, 16);
-    dim3 grid(divUp(src.cols - 2*16, block.x),
-              divUp(src.rows - 2*16, block.y));
-    // dim3 block(1, 1);
-    // dim3 grid(1, 1);
-    fast_detect<<<grid, block>>>(d_srcs[level], iniThFAST, dev_counter, Keys, src.cols, src.rows);
+    uchar1* score_mat;
+    cudaMalloc((void**)&score_mat, memSize);
+    cudaMemset(score_mat, 0, memSize);
 
-    // cudaMemcpy(src.data, d_src, memSize, cudaMemcpyDeviceToHost);
-    // cv::imshow("color coarse fast ", src);
-    // cv::waitKey();
+    // cudaStream_t stream[nRows * nCols];
+
+    // for (int i=0;i<nRows;i++) {
+    //     for (int j=0;j<nCols;j++) {
+    //         cudaStreamCreate(&stream[i * nRows + j]);
+    //     }
+    // }
+
+    //开始遍历图像网格，还是以行开始遍历的
+    for(int i=0; i<nRows; i++)
+    {
+        //计算当前网格初始行坐标
+        const int iniY =minBorderY+i*hCell;
+        //计算当前网格最大的行坐标，这里的+6=+3+3，即考虑到了多出来3是为了cell边界像素进行FAST特征点提取用
+        //前面的EDGE_THRESHOLD指的应该是提取后的特征点所在的边界，所以minBorderY是考虑了计算半径时候的图像边界
+        //目测一个图像网格的大小是25*25啊
+        int maxY = iniY+hCell+6;
+
+        //如果初始的行坐标就已经超过了有效的图像边界了，这里的“有效图像”是指原始的、可以提取FAST特征点的图像区域
+        if(iniY>=maxBorderY-3)
+            //那么就跳过这一行
+            continue;
+        //如果图像的大小导致不能够正好划分出来整齐的图像网格，那么就要委屈最后一行了
+        if(maxY>maxBorderY)
+            maxY = maxBorderY;
+
+        //开始列的遍历
+        for(int j=0; j<nCols; j++)
+        {
+            //计算初始的列坐标
+            const int iniX =minBorderX+j*wCell;
+            //计算这列网格的最大列坐标，+6的含义和前面相同
+            int maxX = iniX+wCell+6;
+
+            //判断坐标是否在图像中
+            if(iniX>=maxBorderX-3)
+                continue;
+
+            //如果最大坐标越界那么委屈一下
+            if(maxX>maxBorderX)
+                maxX = maxBorderX;
+
+            dim3 block(16, 16);
+            dim3 grid(divUp(maxX - iniX, block.x),
+                    divUp(maxY - iniY, block.y));
+            
+            fast_grid<<<grid, block>>>(d_srcs[level], iniY, maxY, iniX, maxX,
+                                        iniThFAST, dev_counter, Keys, score_mat,
+                                        src.cols, src.rows);
+
+        }
+    }
 
     int* n;
     n = (int*)malloc(sizeof(int));
     cudaMemcpy(n, dev_counter, sizeof(int), cudaMemcpyDeviceToHost);
     // cout<< "KeyPoint num: " << *n <<endl;
+
+
 
     ushort2* kptsLoc = (ushort2*)malloc(*n * sizeof(ushort2));
     cudaMemcpy(kptsLoc, Keys, *n * sizeof(ushort2), cudaMemcpyDeviceToHost);
@@ -320,15 +547,18 @@ void ORB_SLAM3::ORBextractor::ExtractorPoint(cv::InputArray image, int level, ve
     //     cv::circle(src, pt, 3, color);
     // }
 
-    // // // cv::namedWindow("color coarse fast", 0);
     // cv::imshow("color coarse fast ", src);
     // cv::waitKey();
 
-    // cudaThreadSynchronize();
+    // for (int i=0;i<nRows;i++) {
+    //     for (int j=0;j<nCols;j++) {
+    //         cudaStreamDestroy(stream[i * nRows + j]);
+    //     }
+    // }
 
     cudaFree(dev_counter);
     cudaFree(Keys);
-    // cudaFree(d_src);
+    cudaFree(score_mat);
 
     free(n);
     free(kptsLoc);
