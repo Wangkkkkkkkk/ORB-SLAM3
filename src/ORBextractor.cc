@@ -1256,6 +1256,18 @@ void ORBextractor::ComputeKeyPointsOctTree(
     double ComputeKP_cuda = 0;
 #endif
 
+#ifdef CUDA_TIME
+    chrono::steady_clock::time_point time_StartExtractorCuda = chrono::steady_clock::now();
+#endif
+
+    // vector<vector<cv::KeyPoint>> vKeys;
+    // ExtractorPointStream(mvImagePyramid, vKeys);
+
+#ifdef CUDA_TIME
+    chrono::steady_clock::time_point time_EndExtractorCuda = chrono::steady_clock::now();
+    ComputeKP_cuda = chrono::duration_cast<chrono::duration<double, milli> >(time_EndExtractorCuda - time_StartExtractorCuda).count();
+#endif
+
     // 对每一层图像做处理
 	//遍历所有图像
     for (int level = 0; level < nlevels; ++level)
@@ -1282,22 +1294,21 @@ void ORBextractor::ComputeKeyPointsOctTree(
         const int hCell = ceil(height/nRows);
 
 #ifdef CUDA_TIME
-        chrono::steady_clock::time_point time_StartComputeKP_cuda = chrono::steady_clock::now();
+        chrono::steady_clock::time_point time_StartExtractorCuda = chrono::steady_clock::now();
 #endif
+
         cv::Mat cuda_Mat = mvImagePyramid[level].clone();
         ExtractorPoint(cuda_Mat, level, vToDistributeKeys);
-        // cout<< "key points number: " << vToDistributeKeys.size() <<endl;
-
-        // ExtractorPointGrid(cuda_Mat, level, vToDistributeKeys, minBorderX, minBorderY, maxBorderX, maxBorderY, nCols, nRows, wCell, hCell);
 
 #ifdef CUDA_TIME
-        chrono::steady_clock::time_point time_EndComputeKP_cuda = chrono::steady_clock::now();
-        double mTimeComputeKP_cuda = chrono::duration_cast<chrono::duration<double, milli> >(time_EndComputeKP_cuda - time_StartComputeKP_cuda).count();
-        ComputeKP_cuda += mTimeComputeKP_cuda;
+        chrono::steady_clock::time_point time_EndExtractorCuda = chrono::steady_clock::now();
+        double mTimeExtractorCuda = chrono::duration_cast<chrono::duration<double, milli> >(time_EndExtractorCuda - time_StartExtractorCuda).count();
+        ComputeKP_cuda += mTimeExtractorCuda;
 #endif
 
+
 #ifdef CUDA_TIME
-    chrono::steady_clock::time_point time_StartComputeKP = chrono::steady_clock::now();
+    chrono::steady_clock::time_point time_StartExtractor = chrono::steady_clock::now();
 #endif
 
 /*
@@ -1366,7 +1377,7 @@ void ORBextractor::ComputeKeyPointsOctTree(
                         (*vit).pt.x+=j*wCell;
                         (*vit).pt.y+=i*hCell;
                         //然后将其加入到”等待被分配“的特征点容器中
-                        vToDistributeKeys.push_back(*vit);
+                        // vToDistributeKeys.push_back(*vit);
                     }//遍历图像cell中的所有的提取出来的FAST角点，并且恢复其在整个金字塔当前层图像下的坐标
                 }//当图像cell中检测到FAST角点的时候执行下面的语句
             }//开始遍历图像cell的列
@@ -1374,9 +1385,9 @@ void ORBextractor::ComputeKeyPointsOctTree(
 */
 
 #ifdef CUDA_TIME
-        chrono::steady_clock::time_point time_EndComputeKP = chrono::steady_clock::now();
-        double mTimeComputeKP = chrono::duration_cast<chrono::duration<double, milli> >(time_EndComputeKP - time_StartComputeKP).count();
-        ComputeKP += mTimeComputeKP;
+    chrono::steady_clock::time_point time_EndExtractor = chrono::steady_clock::now();
+    double mTimeExtractor = chrono::duration_cast<chrono::duration<double, milli> >(time_EndExtractor - time_StartExtractor).count();
+    ComputeKP += mTimeExtractor;
 #endif
 
         //声明一个对当前图层的特征点的容器的引用
@@ -1414,9 +1425,7 @@ void ORBextractor::ComputeKeyPointsOctTree(
     }
 
 #ifdef CUDA_TIME
-        // cout<< "-----------------------------" <<endl;
-        // cout<< "    ComputeKP            time:" << ComputeKP <<endl;
-        // cout<< "    ComputeKP_cuda       time:" << ComputeKP_cuda <<endl;
+        chrono::steady_clock::time_point time_StartCmputeOrientation = chrono::steady_clock::now();
 #endif
 
     // compute orientations
@@ -1425,6 +1434,18 @@ void ORBextractor::ComputeKeyPointsOctTree(
         computeOrientation(mvImagePyramid[level],	//对应的图层的图像
 						   allKeypoints[level], 	//这个图层中提取并保留下来的特征点容器
 						   umax);					//以及PATCH的横坐标边界
+
+#ifdef CUDA_TIME
+        chrono::steady_clock::time_point time_EndCmputeOrientation = chrono::steady_clock::now();
+        double mTimeCmputeOrientation = chrono::duration_cast<chrono::duration<double, milli> >(time_EndCmputeOrientation - time_StartCmputeOrientation).count();
+#endif
+
+#ifdef CUDA_TIME
+    // cout<< "-------------------------" <<endl;
+    // cout<< "ComputeKP          time: " << ComputeKP <<endl;
+    // cout<< "ComputeKP_cuda     time: " << ComputeKP_cuda <<endl;
+    // cout<< "CmputeOrientation  time: " << mTimeCmputeOrientation <<endl;
+#endif
 }
 
 
@@ -1867,10 +1888,8 @@ static void computeDescriptors(const Mat& image, vector<KeyPoint>& keypoints, Ma
     }
 
 #ifdef CUDA_TIME
-            chrono::steady_clock::time_point time_StartGBandCD_cuda = chrono::steady_clock::now();
+        chrono::steady_clock::time_point time_StartGBandCD_cuda = chrono::steady_clock::now();
 #endif
-
-#ifdef CUDA_ACC
 
         _keypoints = vector<cv::KeyPoint>(nkeypoints);
         int offset = 0;
@@ -1943,8 +1962,8 @@ static void computeDescriptors(const Mat& image, vector<KeyPoint>& keypoints, Ma
                 i++;
             }
         }
-#else
 
+/*
         //_keypoints.clear();
         //_keypoints.reserve(nkeypoints);
         _keypoints = vector<cv::KeyPoint>(nkeypoints);
@@ -2019,7 +2038,7 @@ static void computeDescriptors(const Mat& image, vector<KeyPoint>& keypoints, Ma
                 i++;
             }
         }
-#endif
+*/
 
 
 #ifdef CUDA_TIME
@@ -2079,7 +2098,8 @@ static void computeDescriptors(const Mat& image, vector<KeyPoint>& keypoints, Ma
                     0,  						//垂直方向上的缩放系数，留0表示自动计算
                     cv::INTER_LINEAR);		//图像缩放的差值算法类型，这里的是线性插值算法
 
-		        getPyramid(mvImagePyramid[level], level);
+                cv::Mat _image = mvImagePyramid[level].clone();
+		        getPyramid(_image, level);
 
                 copyMakeBorder(mvImagePyramid[level], 					//源图像
                             temp, 									//目标图像（此时其实就已经有大了一圈的尺寸了）
@@ -2120,7 +2140,8 @@ static void computeDescriptors(const Mat& image, vector<KeyPoint>& keypoints, Ma
                     0,  						//垂直方向上的缩放系数，留0表示自动计算
                     cv::INTER_LINEAR);		//图像缩放的差值算法类型，这里的是线性插值算法
 
-                getPyramid(mvImagePyramid[level], level);
+                cv::Mat _image = mvImagePyramid[level].clone();
+                getPyramid(_image, level);
 
                 //把源图像拷贝到目的图像的中央，四面填充指定的像素。图片如果已经拷贝到中间，只填充边界
                 //TODO 貌似这样做是因为在计算描述子前，进行高斯滤波的时候，图像边界会导致一些问题，说不明白
