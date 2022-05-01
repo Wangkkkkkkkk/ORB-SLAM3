@@ -1046,6 +1046,139 @@ vector<cv::KeyPoint> ORBextractor::DistributeOctTree(const vector<cv::KeyPoint>&
 }
 
 
+void ORBextractor::ComputeKeyPointsOctTree_CUDA_ACC(
+	vector<vector<KeyPoint> >& allKeypoints, bool isGFpoints)	//所有的特征点，这里第一层vector存储的是某图层里面的所有特征点，
+												//第二层存储的是整个图像金字塔中的所有图层里面的所有特征点
+{
+	//重新调整图像层数
+    allKeypoints.resize(nlevels);
+
+	//图像cell的尺寸，是个正方形，可以理解为边长in像素坐标
+    const float W = 30;
+
+    // Acc_Extractor->computeProject();
+
+    vector<vector<vector<int>>> vStats;
+    vStats.resize(nlevels);
+
+    vector<int> nfeature_numbers;
+    nfeature_numbers.resize(nlevels);
+
+    vector<int> nWd;
+    vector<int> nHt;
+    nWd.resize(nlevels);
+    nHt.resize(nlevels);
+
+	// 优特征点投影确定优特征区
+    for (int level = 0; level < nlevels; ++level)
+    {
+		//计算这层图像的坐标边界， NOTICE 注意这里是坐标边界，EDGE_THRESHOLD指的应该是可以提取特征点的有效图像边界，后面会一直使用“有效图像边界“这个自创名词
+        const int minBorderX = EDGE_THRESHOLD-3;			//这里的3是因为在计算FAST特征点的时候，需要建立一个半径为3的圆
+        const int minBorderY = minBorderX;					//minY的计算就可以直接拷贝上面的计算结果了
+        const int maxBorderX = mvImagePyramid[level].cols-EDGE_THRESHOLD+3;
+        const int maxBorderY = mvImagePyramid[level].rows-EDGE_THRESHOLD+3;
+
+		//存储需要进行平均分配的特征点
+        vector<cv::KeyPoint> vToDistributeKeys;
+		//一般地都是过量采集，所以这里预分配的空间大小是nfeatures*10
+        vToDistributeKeys.reserve(nfeatures*10);
+
+		//计算进行特征点提取的图像区域尺寸
+        const float width = (maxBorderX-minBorderX);
+        const float height = (maxBorderY-minBorderY);
+
+		//计算网格在当前层的图像有的行数和列数
+        const int nCols = width/W;
+        const int nRows = height/W;
+		//计算每个图像网格所占的像素行数和列数
+        const int wCell = ceil(width/nCols);
+        const int hCell = ceil(height/nRows);
+
+        nWd[level] = wCell;
+        nHt[level] = hCell;
+
+        vStats[level] = Acc_Extractor->buildStat(nCols, nRows, wCell, hCell,
+                                                minBorderX, minBorderY, maxBorderX, maxBorderY,
+                                                level, W, width, height);
+
+        // for (int r=0;r<vStats[level].size();r++) {
+        //     for (int c=0;c<vStats[level][r].size();c++) {
+        //         cout<< vStats[level][r][c] << " ";
+        //     }
+        //     cout<<endl;
+        // }
+
+        if (level < 3) {
+            nfeature_numbers[level] = min(mnFeaturesPerLevel[level], int(mnFeaturesPerLevel[level] * Acc_Extractor->density[level] * 1.5));
+            // nFeature_number = mnFeaturesPerLevel[level];
+        }
+        else {
+            nfeature_numbers[level] = mnFeaturesPerLevel[level] / 1.5;
+        }
+
+    }
+
+    // CUDA 加速特征提取
+    vector<vector<cv::KeyPoint>> vKeys;
+    vKeys.resize(nlevels);
+    ExtractorPointStream_ACC(mvImagePyramid, vKeys, vStats, nWd, nHt);
+
+    // 对每一层图像做处理
+	//遍历所有图像
+    for (int level = 0; level < nlevels; ++level)
+    {
+		//计算这层图像的坐标边界， NOTICE 注意这里是坐标边界，EDGE_THRESHOLD指的应该是可以提取特征点的有效图像边界，后面会一直使用“有效图像边界“这个自创名词
+        const int minBorderX = EDGE_THRESHOLD-3;			//这里的3是因为在计算FAST特征点的时候，需要建立一个半径为3的圆
+        const int minBorderY = minBorderX;					//minY的计算就可以直接拷贝上面的计算结果了
+        const int maxBorderX = mvImagePyramid[level].cols-EDGE_THRESHOLD+3;
+        const int maxBorderY = mvImagePyramid[level].rows-EDGE_THRESHOLD+3;
+        //声明一个对当前图层的特征点的容器的引用
+        vector<KeyPoint> & keypoints = allKeypoints[level];
+		//并且调整其大小为欲提取出来的特征点个数（当然这里也是扩大了的，因为不可能所有的特征点都是在这一个图层中提取出来的）
+        keypoints.reserve(nfeatures);
+
+        if (vKeys.size() == 0) {
+            continue;
+        }
+
+        // 根据mnFeatuvector<KeyPoint> & keypoints = allKeypoints[level];resPerLevel,即该层的兴趣点数,对特征点进行剔除
+		//返回值是一个保存有特征点的vector容器，含有剔除后的保留下来的特征点
+        //得到的特征点的坐标，依旧是在当前图层下来讲的
+        keypoints = DistributeOctTree(vKeys[level], 			    //当前图层提取出来的特征点，也即是等待剔除的特征点
+																	//NOTICE 注意此时特征点所使用的坐标都是在“半径扩充图像”下的
+									  minBorderX, maxBorderX,		//当前图层图像的边界，而这里的坐标却都是在“边缘扩充图像”下的
+                                      minBorderY, maxBorderY,
+									  nfeature_numbers[level], 	//希望保留下来的当前层图像的特征点个数
+									  level);						//当前层图像所在的图层
+
+		//PATCH_SIZE是对于底层的初始图像来说的，现在要根据当前图层的尺度缩放倍数进行缩放得到缩放后的PATCH大小 和特征点的方向计算有关
+        const int scaledPatchSize = PATCH_SIZE*mvScaleFactor[level];
+
+        // Add border to coordinates and scale information
+		//获取剔除过程后保留下来的特征点数目
+        const int nkps = keypoints.size();
+		//然后开始遍历这些特征点，恢复其在当前图层图像坐标系下的坐标
+        for(int i=0; i<nkps ; i++)
+        {
+			//对每一个保留下来的特征点，恢复到相对于当前图层“边缘扩充图像下”的坐标系的坐标
+            keypoints[i].pt.x+=minBorderX;
+            keypoints[i].pt.y+=minBorderY;
+			//记录特征点来源的图像金字塔图层
+            keypoints[i].octave=level;
+			//记录计算方向的patch，缩放后对应的大小， 又被称作为特征点半径
+            keypoints[i].size = scaledPatchSize;
+        }
+    }
+
+    // compute orientations
+    //然后计算这些特征点的方向信息，注意这里还是分层计算的
+    for (int level = 0; level < nlevels; ++level)
+        computeOrientation(mvImagePyramid[level],	//对应的图层的图像
+						   allKeypoints[level], 	//这个图层中提取并保留下来的特征点容器
+						   umax);					//以及PATCH的横坐标边界
+
+}
+
 //计算四叉树的特征点，函数名字后面的OctTree只是说明了在过滤和分配特征点时所使用的方式
 void ORBextractor::ComputeKeyPointsOctTree(
 	vector<vector<KeyPoint> >& allKeypoints, bool isGFpoints)	//所有的特征点，这里第一层vector存储的是某图层里面的所有特征点，
@@ -1061,7 +1194,7 @@ void ORBextractor::ComputeKeyPointsOctTree(
     chrono::steady_clock::time_point time_StartGetinfo = chrono::steady_clock::now();
 #endif
 
-    Acc_Extractor->computeProject();
+    // Acc_Extractor->computeProject();
 
 #ifdef ACCELERATE_TIME
     chrono::steady_clock::time_point time_EndGetinfo = chrono::steady_clock::now();
@@ -1241,7 +1374,7 @@ void ORBextractor::ComputeKeyPointsOctTree(
 }
 
 //计算四叉树的特征点，函数名字后面的OctTree只是说明了在过滤和分配特征点时所使用的方式
-void ORBextractor::ComputeKeyPointsOctTree(
+void ORBextractor::ComputeKeyPointsOctTree_CUDA(
     vector<vector<KeyPoint> >& allKeypoints)	//所有的特征点，这里第一层vector存储的是某图层里面的所有特征点，
 												//第二层存储的是整个图像金字塔中的所有图层里面的所有特征点
 {
@@ -1260,13 +1393,104 @@ void ORBextractor::ComputeKeyPointsOctTree(
     chrono::steady_clock::time_point time_StartExtractorCuda = chrono::steady_clock::now();
 #endif
 
-    // vector<vector<cv::KeyPoint>> vKeys;
-    // ExtractorPointStream(mvImagePyramid, vKeys);
+    vector<vector<cv::KeyPoint>> vKeys;
+    vKeys.resize(nlevels);
+    ExtractorPointStream(mvImagePyramid, vKeys);
 
 #ifdef CUDA_TIME
     chrono::steady_clock::time_point time_EndExtractorCuda = chrono::steady_clock::now();
     ComputeKP_cuda = chrono::duration_cast<chrono::duration<double, milli> >(time_EndExtractorCuda - time_StartExtractorCuda).count();
 #endif
+
+#ifdef CUDA_TIME
+        chrono::steady_clock::time_point time_StartDistributeOctTree = chrono::steady_clock::now();
+#endif
+
+    // 对每一层图像做处理
+	//遍历所有图像
+    for (int level = 0; level < nlevels; ++level)
+    {
+		//计算这层图像的坐标边界， NOTICE 注意这里是坐标边界，EDGE_THRESHOLD指的应该是可以提取特征点的有效图像边界，后面会一直使用“有效图像边界“这个自创名词
+        const int minBorderX = EDGE_THRESHOLD-3;			//这里的3是因为在计算FAST特征点的时候，需要建立一个半径为3的圆
+        const int minBorderY = minBorderX;					//minY的计算就可以直接拷贝上面的计算结果了
+        const int maxBorderX = mvImagePyramid[level].cols-EDGE_THRESHOLD+3;
+        const int maxBorderY = mvImagePyramid[level].rows-EDGE_THRESHOLD+3;
+
+        //声明一个对当前图层的特征点的容器的引用
+        vector<KeyPoint> & keypoints = allKeypoints[level];
+		//并且调整其大小为欲提取出来的特征点个数（当然这里也是扩大了的，因为不可能所有的特征点都是在这一个图层中提取出来的）
+        keypoints.reserve(nfeatures);
+
+        // 根据mnFeatuvector<KeyPoint> & keypoints = allKeypoints[level];resPerLevel,即该层的兴趣点数,对特征点进行剔除
+		//返回值是一个保存有特征点的vector容器，含有剔除后的保留下来的特征点
+        //得到的特征点的坐标，依旧是在当前图层下来讲的
+        keypoints = DistributeOctTree(vKeys[level], 			    //当前图层提取出来的特征点，也即是等待剔除的特征点
+																	//NOTICE 注意此时特征点所使用的坐标都是在“半径扩充图像”下的
+									  minBorderX, maxBorderX,		//当前图层图像的边界，而这里的坐标却都是在“边缘扩充图像”下的
+                                      minBorderY, maxBorderY,
+									  mnFeaturesPerLevel[level], 	//希望保留下来的当前层图像的特征点个数
+									  level);						//当前层图像所在的图层
+
+		//PATCH_SIZE是对于底层的初始图像来说的，现在要根据当前图层的尺度缩放倍数进行缩放得到缩放后的PATCH大小 和特征点的方向计算有关
+        const int scaledPatchSize = PATCH_SIZE*mvScaleFactor[level];
+
+        // Add border to coordinates and scale information
+		//获取剔除过程后保留下来的特征点数目
+        const int nkps = keypoints.size();
+		//然后开始遍历这些特征点，恢复其在当前图层图像坐标系下的坐标
+        for(int i=0; i<nkps ; i++)
+        {
+			//对每一个保留下来的特征点，恢复到相对于当前图层“边缘扩充图像下”的坐标系的坐标
+            keypoints[i].pt.x+=minBorderX;
+            keypoints[i].pt.y+=minBorderY;
+			//记录特征点来源的图像金字塔图层
+            keypoints[i].octave=level;
+			//记录计算方向的patch，缩放后对应的大小， 又被称作为特征点半径
+            keypoints[i].size = scaledPatchSize;
+        }
+    }
+
+#ifdef CUDA_TIME
+        chrono::steady_clock::time_point time_EndDistributeOctTree = chrono::steady_clock::now();
+        double mTimeDistributeOctTree = chrono::duration_cast<chrono::duration<double, milli> >(time_EndDistributeOctTree - time_StartDistributeOctTree).count();
+#endif
+
+#ifdef CUDA_TIME
+        chrono::steady_clock::time_point time_StartCmputeOrientation = chrono::steady_clock::now();
+#endif
+
+    // compute orientations
+    //然后计算这些特征点的方向信息，注意这里还是分层计算的
+    for (int level = 0; level < nlevels; ++level)
+        computeOrientation(mvImagePyramid[level],	//对应的图层的图像
+						   allKeypoints[level], 	//这个图层中提取并保留下来的特征点容器
+						   umax);					//以及PATCH的横坐标边界
+
+#ifdef CUDA_TIME
+        chrono::steady_clock::time_point time_EndCmputeOrientation = chrono::steady_clock::now();
+        double mTimeCmputeOrientation = chrono::duration_cast<chrono::duration<double, milli> >(time_EndCmputeOrientation - time_StartCmputeOrientation).count();
+#endif
+
+#ifdef CUDA_TIME
+    cout<< "-------------------------" <<endl;
+    cout<< "ComputeKP          time: " << ComputeKP <<endl;
+    cout<< "ComputeKP_cuda     time: " << ComputeKP_cuda <<endl;
+    cout<< "ComputeKP_cuda     time: " << ComputeKP_cuda <<endl;
+    cout<< "CmputeOrientation  time: " << mTimeCmputeOrientation <<endl;
+#endif
+}
+
+//计算四叉树的特征点，函数名字后面的OctTree只是说明了在过滤和分配特征点时所使用的方式
+void ORBextractor::ComputeKeyPointsOctTree(
+    vector<vector<KeyPoint> >& allKeypoints)	//所有的特征点，这里第一层vector存储的是某图层里面的所有特征点，
+												//第二层存储的是整个图像金字塔中的所有图层里面的所有特征点
+{
+	//重新调整图像层数
+    allKeypoints.resize(nlevels);
+
+	//图像cell的尺寸，是个正方形，可以理解为边长in像素坐标
+    const float W = 35;
+
 
     // 对每一层图像做处理
 	//遍历所有图像
@@ -1293,25 +1517,7 @@ void ORBextractor::ComputeKeyPointsOctTree(
         const int wCell = ceil(width/nCols);
         const int hCell = ceil(height/nRows);
 
-#ifdef CUDA_TIME
-        chrono::steady_clock::time_point time_StartExtractorCuda = chrono::steady_clock::now();
-#endif
 
-        cv::Mat cuda_Mat = mvImagePyramid[level].clone();
-        ExtractorPoint(cuda_Mat, level, vToDistributeKeys);
-
-#ifdef CUDA_TIME
-        chrono::steady_clock::time_point time_EndExtractorCuda = chrono::steady_clock::now();
-        double mTimeExtractorCuda = chrono::duration_cast<chrono::duration<double, milli> >(time_EndExtractorCuda - time_StartExtractorCuda).count();
-        ComputeKP_cuda += mTimeExtractorCuda;
-#endif
-
-
-#ifdef CUDA_TIME
-    chrono::steady_clock::time_point time_StartExtractor = chrono::steady_clock::now();
-#endif
-
-/*
 		//开始遍历图像网格，还是以行开始遍历的
         for(int i=0; i<nRows; i++)
         {
@@ -1377,18 +1583,11 @@ void ORBextractor::ComputeKeyPointsOctTree(
                         (*vit).pt.x+=j*wCell;
                         (*vit).pt.y+=i*hCell;
                         //然后将其加入到”等待被分配“的特征点容器中
-                        // vToDistributeKeys.push_back(*vit);
+                        vToDistributeKeys.push_back(*vit);
                     }//遍历图像cell中的所有的提取出来的FAST角点，并且恢复其在整个金字塔当前层图像下的坐标
                 }//当图像cell中检测到FAST角点的时候执行下面的语句
             }//开始遍历图像cell的列
         }//开始遍历图像cell的行
-*/
-
-#ifdef CUDA_TIME
-    chrono::steady_clock::time_point time_EndExtractor = chrono::steady_clock::now();
-    double mTimeExtractor = chrono::duration_cast<chrono::duration<double, milli> >(time_EndExtractor - time_StartExtractor).count();
-    ComputeKP += mTimeExtractor;
-#endif
 
         //声明一个对当前图层的特征点的容器的引用
         vector<KeyPoint> & keypoints = allKeypoints[level];
@@ -1424,28 +1623,12 @@ void ORBextractor::ComputeKeyPointsOctTree(
         }
     }
 
-#ifdef CUDA_TIME
-        chrono::steady_clock::time_point time_StartCmputeOrientation = chrono::steady_clock::now();
-#endif
-
     // compute orientations
     //然后计算这些特征点的方向信息，注意这里还是分层计算的
     for (int level = 0; level < nlevels; ++level)
         computeOrientation(mvImagePyramid[level],	//对应的图层的图像
 						   allKeypoints[level], 	//这个图层中提取并保留下来的特征点容器
 						   umax);					//以及PATCH的横坐标边界
-
-#ifdef CUDA_TIME
-        chrono::steady_clock::time_point time_EndCmputeOrientation = chrono::steady_clock::now();
-        double mTimeCmputeOrientation = chrono::duration_cast<chrono::duration<double, milli> >(time_EndCmputeOrientation - time_StartCmputeOrientation).count();
-#endif
-
-#ifdef CUDA_TIME
-    // cout<< "-------------------------" <<endl;
-    // cout<< "ComputeKP          time: " << ComputeKP <<endl;
-    // cout<< "ComputeKP_cuda     time: " << ComputeKP_cuda <<endl;
-    // cout<< "CmputeOrientation  time: " << mTimeCmputeOrientation <<endl;
-#endif
 }
 
 
@@ -1809,16 +1992,25 @@ static void computeDescriptors(const Mat& image, vector<KeyPoint>& keypoints, Ma
 
 	//获取图像的大小
     Mat image = _image.getMat();
+
     Acc_Extractor->getImage(image);
+
 
 #ifdef CUDA_TIME
         chrono::steady_clock::time_point time_StartORBkeypoint = chrono::steady_clock::now();
+        chrono::steady_clock::time_point time_StartGetinfo = chrono::steady_clock::now();
+        chrono::steady_clock::time_point time_EndGetinfo = chrono::steady_clock::now();
+        double mTimeGetinfo;
+
+        chrono::steady_clock::time_point time_StartKeypointTree = chrono::steady_clock::now();
+        chrono::steady_clock::time_point time_EndKeypointTree = chrono::steady_clock::now();
+        double mTimeKeypointTree;
 #endif
 
     // 根据投影点聚类特征提取网格
     vector < vector<KeyPoint> > allKeypoints;
     vector<vector<cv::Point2f> > sGFpoints;
-    if (mPreframe != NULL && !mPreframe->mPredictTcw_last.empty() && mPreframe->mnId > 30*5 && false) {
+    if (mPreframe != NULL && !mPreframe->mPredictTcw_last.empty() && mPreframe->mnId > 30*5) {
        //判断图像的格式是否正确，要求是单通道灰度值
         assert(image.type() == CV_8UC1 );
         // 上一帧信息加入加速类
@@ -1826,17 +2018,36 @@ static void computeDescriptors(const Mat& image, vector<KeyPoint>& keypoints, Ma
 
         // Pre-compute the scale pyramid
         // Step 2 构建图像金字塔
-        // time_StartGetinfo = std::chrono::steady_clock::now();
+
+#ifdef CUDA_TIME
+        time_StartGetinfo = std::chrono::steady_clock::now();
+#endif
+        Acc_Extractor->computeProject();
+
         ComputePyramid(image, mPreframe->isGFpoints);
-        // time_EndGetinfo = std::chrono::steady_clock::now();
-        // mTimeGetinfo = std::chrono::duration_cast<std::chrono::duration<double,std::milli> >(time_EndGetinfo - time_StartGetinfo).count();
+
+#ifdef CUDA_TIME
+        time_EndGetinfo = std::chrono::steady_clock::now();
+        mTimeGetinfo = std::chrono::duration_cast<std::chrono::duration<double,std::milli> >(time_EndGetinfo - time_StartGetinfo).count();
+#endif
+
         // cout<< "  ComputePyramid time:" << mTimeGetinfo <<endl;
 
         // Step 3 计算图像的特征点，并且将特征点进行均匀化。均匀的特征点可以提高位姿计算精度
         // 存储所有的特征点，注意此处为二维的vector，第一维存储的是金字塔的层数，第二维存储的是那一层金字塔图像里提取的所有特征点
 
         //使用四叉树的方式计算每层图像的特征点并进行分配
-        ComputeKeyPointsOctTree(allKeypoints, mPreframe->isGFpoints);
+#ifdef CUDA_TIME
+        time_StartKeypointTree = std::chrono::steady_clock::now();
+#endif
+
+        ComputeKeyPointsOctTree_CUDA_ACC(allKeypoints, mPreframe->isGFpoints);
+
+#ifdef CUDA_TIME
+        time_EndKeypointTree = std::chrono::steady_clock::now();
+        mTimeKeypointTree = std::chrono::duration_cast<std::chrono::duration<double,std::milli> >(time_EndKeypointTree - time_StartKeypointTree).count();
+#endif
+
     }
     else {
         Acc_Extractor->nNumber = -1;
@@ -1845,13 +2056,35 @@ static void computeDescriptors(const Mat& image, vector<KeyPoint>& keypoints, Ma
 
         // Pre-compute the scale pyramid
         // Step 2 构建图像金字塔
+
+#ifdef CUDA_TIME
+        time_StartGetinfo = std::chrono::steady_clock::now();
+#endif
+
         ComputePyramid(image);
+
+#ifdef CUDA_TIME
+        time_EndGetinfo = std::chrono::steady_clock::now();
+        mTimeGetinfo = std::chrono::duration_cast<std::chrono::duration<double,std::milli> >(time_EndGetinfo - time_StartGetinfo).count();
+#endif
 
         // Step 3 计算图像的特征点，并且将特征点进行均匀化。均匀的特征点可以提高位姿计算精度
         // 存储所有的特征点，注意此处为二维的vector，第一维存储的是金字塔的层数，第二维存储的是那一层金字塔图像里提取的所有特征点
 
         //使用四叉树的方式计算每层图像的特征点并进行分配
-        ComputeKeyPointsOctTree(allKeypoints);
+
+#ifdef CUDA_TIME
+        time_StartKeypointTree = std::chrono::steady_clock::now();
+#endif
+
+        ComputeKeyPointsOctTree_CUDA(allKeypoints);
+
+#ifdef CUDA_TIME
+        time_EndKeypointTree = std::chrono::steady_clock::now();
+        mTimeKeypointTree = std::chrono::duration_cast<std::chrono::duration<double,std::milli> >(time_EndKeypointTree - time_StartKeypointTree).count();
+#endif
+
+    
     }
 
 	//使用传统的方法提取并平均分配图像的特征点，作者并未使用
@@ -1888,8 +2121,12 @@ static void computeDescriptors(const Mat& image, vector<KeyPoint>& keypoints, Ma
     }
 
 #ifdef CUDA_TIME
-        chrono::steady_clock::time_point time_StartGBandCD_cuda = chrono::steady_clock::now();
+        double GB_time = 0;
+        double CD_time = 0;
+        chrono::steady_clock::time_point time_StartGBandCD = chrono::steady_clock::now();
 #endif
+
+#ifdef CUDA_ACC
 
         _keypoints = vector<cv::KeyPoint>(nkeypoints);
         int offset = 0;
@@ -1915,8 +2152,7 @@ static void computeDescriptors(const Mat& image, vector<KeyPoint>& keypoints, Ma
             Mat workingMat_cuda = mvImagePyramid[level].clone();
             // imwrite(filename_Mat, workingMat);
 
-            // 高斯滤波器kernel为 3 * 3；
-            GBandCD_CUDA(workingMat_cuda, level);
+            
 
             // imwrite(filename_Mat_cuda, workingMat_cuda);
             // imwrite(filename_Mat_GB, workingMat);
@@ -1925,11 +2161,35 @@ static void computeDescriptors(const Mat& image, vector<KeyPoint>& keypoints, Ma
             // desc存储当前图层的描述子
             //Mat desc = descriptors.rowRange(offset, offset + nkeypointsLevel);
             Mat desc = cv::Mat(nkeypointsLevel, 32, CV_8U);
+
+#ifdef CUDA_TIME
+        chrono::steady_clock::time_point time_StartGB = chrono::steady_clock::now();
+#endif
+
+            // 高斯滤波器kernel为 3 * 3；
+            GBandCD_CUDA(workingMat_cuda, level);
+
+#ifdef CUDA_TIME
+        chrono::steady_clock::time_point time_EndGB = chrono::steady_clock::now();
+        double mTimeGB = chrono::duration_cast<chrono::duration<double, milli> >(time_EndGB - time_StartGB).count();
+        GB_time += mTimeGB;
+#endif
+
+#ifdef CUDA_TIME
+        chrono::steady_clock::time_point time_StartCD = chrono::steady_clock::now();
+#endif
+
             // Step 6 计算高斯模糊后图像的描述子
             computeDescriptors(workingMat_cuda, 	//高斯模糊之后的图层图像
                             keypoints, 	//当前图层中的特征点集合
                             desc, 		//存储计算之后的描述子
                             pattern);	//随机采样点集
+
+#ifdef CUDA_TIME
+        chrono::steady_clock::time_point time_EndCD = chrono::steady_clock::now();
+        double mTimeCD = chrono::duration_cast<chrono::duration<double, milli> >(time_EndCD - time_StartCD).count();
+        CD_time += mTimeCD;
+#endif
 
             // 更新偏移量的值 
             offset += nkeypointsLevel;
@@ -1963,7 +2223,8 @@ static void computeDescriptors(const Mat& image, vector<KeyPoint>& keypoints, Ma
             }
         }
 
-/*
+#else
+
         //_keypoints.clear();
         //_keypoints.reserve(nkeypoints);
         _keypoints = vector<cv::KeyPoint>(nkeypoints);
@@ -1988,6 +2249,10 @@ static void computeDescriptors(const Mat& image, vector<KeyPoint>& keypoints, Ma
 
             Mat workingMat = mvImagePyramid[level].clone();
 
+#ifdef CUDA_TIME
+        chrono::steady_clock::time_point time_StartGB = chrono::steady_clock::now();
+#endif
+
             // 注意：提取特征点的时候，使用的是清晰的原图像；这里计算描述子的时候，为了避免图像噪声的影响，使用了高斯模糊
             GaussianBlur(workingMat, 		//源图像
                         workingMat, 		//输出图像
@@ -1996,6 +2261,15 @@ static void computeDescriptors(const Mat& image, vector<KeyPoint>& keypoints, Ma
                         2, 				//高斯滤波在y方向的标准差
                         BORDER_REFLECT_101);//边缘拓展点插值类型
 
+#ifdef CUDA_TIME
+        chrono::steady_clock::time_point time_EndGB = chrono::steady_clock::now();
+        double mTimeGB = chrono::duration_cast<chrono::duration<double, milli> >(time_EndGB - time_StartGB).count();
+        GB_time += mTimeGB;
+#endif
+
+#ifdef CUDA_TIME
+        chrono::steady_clock::time_point time_StartCD = chrono::steady_clock::now();
+#endif
 
             // Compute the descriptors
             // desc存储当前图层的描述子
@@ -2006,6 +2280,12 @@ static void computeDescriptors(const Mat& image, vector<KeyPoint>& keypoints, Ma
                             keypoints, 	//当前图层中的特征点集合
                             desc, 		//存储计算之后的描述子
                             pattern);	//随机采样点集
+
+#ifdef CUDA_TIME
+        chrono::steady_clock::time_point time_EndCD = chrono::steady_clock::now();
+        double mTimeCD = chrono::duration_cast<chrono::duration<double, milli> >(time_EndCD - time_StartCD).count();
+        CD_time += mTimeCD;
+#endif
 
             // 更新偏移量的值 
             offset += nkeypointsLevel;
@@ -2038,21 +2318,23 @@ static void computeDescriptors(const Mat& image, vector<KeyPoint>& keypoints, Ma
                 i++;
             }
         }
-*/
-
+#endif
 
 #ifdef CUDA_TIME
         chrono::steady_clock::time_point time_EndORBextractor = chrono::steady_clock::now();
         double mTimeORBextractor = chrono::duration_cast<chrono::duration<double, milli> >(time_EndORBextractor - time_StartORBextractor).count();
         
         chrono::steady_clock::time_point time_EndGBandCD = chrono::steady_clock::now();
-        // double mTimeGBandCD = chrono::duration_cast<chrono::duration<double, milli> >(time_EndGBandCD - time_StartGBandCD).count();
+        double mTimeGBandCD = chrono::duration_cast<chrono::duration<double, milli> >(time_EndGBandCD - time_StartGBandCD).count();
 
-        // cout<< "-----------------------------" <<endl;
-        // cout<< "ORBextractor           time:" << mTimeORBextractor <<endl;
-        // cout<< "    ORBkeypoint        time:" << mTimeORBkeypoint <<endl;
-        // cout<< "    GBandCD            time:" << mTimeGBandCD <<endl;
-        // cout<< "    GBandCD_cuda       time:" << mTimeGBandCD_cuda <<endl;
+        cout<< "-----------------------------" <<endl;
+        cout<< "ORBextractor           time:" << mTimeORBextractor <<endl;
+        cout<< "    ORBkeypoint        time:" << mTimeORBkeypoint <<endl;
+        cout<< "       Getinfo         time:" << mTimeGetinfo <<endl;
+        cout<< "       KeypointTree    time:" << mTimeKeypointTree <<endl;
+        cout<< "    GBandCD            time:" << mTimeGBandCD <<endl;
+        cout<< "       GB              time:" << GB_time <<endl;
+        cout<< "       CD              time:" << CD_time <<endl;
 #endif
 
         // cout << "[ORBextractor]: extracted " << _keypoints.size() << " KeyPoints" << endl;
@@ -2071,8 +2353,6 @@ static void computeDescriptors(const Mat& image, vector<KeyPoint>& keypoints, Ma
             Size wholeSize(sz.width + EDGE_THRESHOLD*2, sz.height + EDGE_THRESHOLD*2);
             Mat temp(wholeSize, image.type()), masktemp;
             mvImagePyramid[level] = temp(Rect(EDGE_THRESHOLD, EDGE_THRESHOLD, sz.width, sz.height));
-
-            
 
             // Compute the resized image
             //计算第0层以上resize后的图像
@@ -2098,8 +2378,10 @@ static void computeDescriptors(const Mat& image, vector<KeyPoint>& keypoints, Ma
                     0,  						//垂直方向上的缩放系数，留0表示自动计算
                     cv::INTER_LINEAR);		//图像缩放的差值算法类型，这里的是线性插值算法
 
+#ifdef CUDA_ACC
                 cv::Mat _image = mvImagePyramid[level].clone();
 		        getPyramid(_image, level);
+#endif
 
                 copyMakeBorder(mvImagePyramid[level], 					//源图像
                             temp, 									//目标图像（此时其实就已经有大了一圈的尺寸了）
@@ -2109,7 +2391,10 @@ static void computeDescriptors(const Mat& image, vector<KeyPoint>& keypoints, Ma
             }
             else
             {
+
+#ifdef CUDA_ACC
                 getPyramid(image, level);
+#endif
 
                 copyMakeBorder(image,
                             temp, EDGE_THRESHOLD, EDGE_THRESHOLD, EDGE_THRESHOLD, EDGE_THRESHOLD,
@@ -2140,8 +2425,10 @@ static void computeDescriptors(const Mat& image, vector<KeyPoint>& keypoints, Ma
                     0,  						//垂直方向上的缩放系数，留0表示自动计算
                     cv::INTER_LINEAR);		//图像缩放的差值算法类型，这里的是线性插值算法
 
+#ifdef CUDA_ACC
                 cv::Mat _image = mvImagePyramid[level].clone();
                 getPyramid(_image, level);
+#endif
 
                 //把源图像拷贝到目的图像的中央，四面填充指定的像素。图片如果已经拷贝到中间，只填充边界
                 //TODO 貌似这样做是因为在计算描述子前，进行高斯滤波的时候，图像边界会导致一些问题，说不明白
@@ -2166,7 +2453,10 @@ static void computeDescriptors(const Mat& image, vector<KeyPoint>& keypoints, Ma
             }
             else
             {
+
+#ifdef CUDA_ACC
                 getPyramid(image, level);
+#endif
 
                 //对于底层图像，直接就扩充边界了
                 //?temp 是在循环内部新定义的，在该函数里又作为输出，并没有使用啊！

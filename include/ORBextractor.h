@@ -25,7 +25,8 @@
 #include <Accelerate.h>
 
 // #define ACCELERATE_TIME
-#define CUDA_TIME
+// #define CUDA_TIME
+#define CUDA_ACC
 
 namespace ORB_SLAM3
 {
@@ -71,6 +72,8 @@ public:
     void GBandCD_CUDA(cv::InputArray image, int level);
     void ExtractorPoint(cv::InputArray image, int level, vector<cv::KeyPoint> &vKeys);
     void ExtractorPointStream(std::vector<cv::Mat> &mvImagePyramid, vector<vector<cv::KeyPoint>> &vKeys);
+    void ExtractorPointStream_ACC(std::vector<cv::Mat> &mvImagePyramid, vector<vector<cv::KeyPoint>> &vKeys,
+                                    vector<vector<vector<int>>> &vStats, vector<int> &nWd, vector<int> &nHt);
     void deleteMem();
 
     int inline GetLevels(){
@@ -102,6 +105,8 @@ protected:
     void ComputePyramid(cv::Mat image, bool isGFpoints);
     void ComputePyramid(cv::Mat image);
     void ComputeKeyPointsOctTree(std::vector<std::vector<cv::KeyPoint> >& allKeypoints, bool isGFpoints);
+    void ComputeKeyPointsOctTree_CUDA_ACC(std::vector<std::vector<cv::KeyPoint> >& allKeypoints, bool isGFpoints);
+    void ComputeKeyPointsOctTree_CUDA(std::vector<std::vector<cv::KeyPoint> >& allKeypoints);
     void ComputeKeyPointsOctTree(std::vector<std::vector<cv::KeyPoint> >& allKeypoints);
     std::vector<cv::KeyPoint> DistributeOctTree(const std::vector<cv::KeyPoint>& vToDistributeKeys, const int &minX,
                                            const int &maxX, const int &minY, const int &maxY, const int &nFeatures, const int &level);

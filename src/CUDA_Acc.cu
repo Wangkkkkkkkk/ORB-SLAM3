@@ -7,7 +7,7 @@
 #include "opencv2/core/cuda.hpp"
 #include "opencv2/core/cuda_stream_accessor.hpp"
 #include <opencv2/features2d/features2d.hpp>
-
+#include <vector>
 #include <thrust/host_vector.h>
 #include <thrust/device_vector.h>
 
@@ -20,6 +20,8 @@ float scaleFactor;
 int isGetImageSize;
 int Threshold;
 
+vector<ushort3*> keys;
+
 cudaStream_t *streams;
 
 uchar threshold_tab[512];
@@ -28,7 +30,7 @@ __device__ uchar* threshold_tab_cuda;
 thrust::device_vector<uchar1*> d_srcs;
 thrust::device_vector<uchar1*> d_dsts;
 
-__device__ ushort3* Keys;
+thrust::device_vector<ushort3*> Keys;
 thrust::device_vector<uchar1*> score_mats;
 __device__ ushort3* KeyPoints;
 
@@ -47,6 +49,11 @@ __global__ void gray_gaussian_filtering(uchar1* img, uchar1* dst, int width, int
         float v3 = (img[(idy+1)*width + idx].x + img[(idy-1)*width + idx].x + img[idy*width + idx+1].x + img[idy*width + idx-1].x) * 0.1248;
         dst[idy*width + idx].x = v1 + v2 + v3;
     }
+}
+
+__global__ void compute_OrbDescriptor()
+{
+
 }
 
 __device__ int cornerScore(uchar v, uchar* c, int threshold) {
@@ -286,6 +293,35 @@ __global__ void fast(uchar1* img, const int threshold, uchar* threshold_tab, int
     }
 }
 
+__global__ void fast_ACC(uchar1* img, const int threshold, uchar* threshold_tab,
+                        int* stat, size_t pitch, int Wd, int Ht,
+                        int *dev_counter, ushort3 *kptsLoc2D, uchar1* score_mat,
+                        int width, int height) 
+{
+    const ushort idx = blockIdx.x * blockDim.x + threadIdx.x + 16;
+    const ushort idy = blockIdx.y * blockDim.y + threadIdx.y + 16;
+
+    int r = (idy - 16) / Ht;
+    int c = (idx - 16) / Wd;
+    int* row = (int*)((char*)stat + r * pitch);
+    int ele = row[c];
+
+    if (idx < width - 16 && idy < height - 16 && ele != 0)
+    {
+        // 检查是否通过 Fast 角点的收录标准
+        int response = fast_detect_16(img, idx, idy, threshold, threshold_tab, width, height);
+        if (response > 0)
+        {
+            int pIdx = atomicAdd(dev_counter, 1);
+            if (pIdx < 10000)
+            {
+                kptsLoc2D[pIdx] = {idx, idy, response};
+                score_mat[idy * width + idx].x = response;
+            }
+        }
+    }
+}
+
 #define NM_RADIUS 3 // 非极大抑制范围 Radius
 // 非极大抑制，剔除部分 Edge 点(negtive)，同时保存特征点的三维位置信息
 __global__ void nonmaxSuppression(ushort3* kptsLoc2D, int kpt_num,
@@ -322,11 +358,17 @@ void ORB_SLAM3::ORBextractor::CUDA_Initial(int _nlevel, float _scaleFactor)
 
     d_srcs.resize(nlevels);
     d_dsts.resize(nlevels);
+    Keys.resize(nlevels);
     score_mats.resize(nlevels);
 
     streams = (cudaStream_t*)malloc(nlevels * sizeof(cudaStream_t));
     for (int i=0;i<nlevels;i++) {
         cudaStreamCreate(&streams[i]);
+    }
+
+    for (int i = 0;i < nlevels;i++) {
+        ushort3* _k = (ushort3*)malloc(10000 * sizeof(ushort3));
+        keys.push_back(_k);
     }
 
     Threshold = 25;
@@ -350,14 +392,17 @@ void ORB_SLAM3::ORBextractor::getPyramid(cv::InputArray image, int level)
         uchar1* d_src;
         uchar1* d_dst;
         uchar1* score_mat;
+        ushort3* key;
 
         size_t memSize = width * height * sizeof(uchar1);
         cudaMalloc((void**)&d_src, memSize);
         cudaMalloc((void**)&d_dst, memSize);
         cudaMalloc((void**)&score_mat, memSize);
+        cudaMalloc((void**)&key, (10-level) * 1000 * sizeof(ushort3));
 
         d_srcs[level] = d_src;
         d_dsts[level] = d_dst;
+        Keys[level] = key;
         score_mats[level] = score_mat;
 
         // 只创建一次内存空间
@@ -365,15 +410,13 @@ void ORB_SLAM3::ORBextractor::getPyramid(cv::InputArray image, int level)
             isGetImageSize = 1;
 
             size_t memSizes = 10000 * sizeof(ushort3);
-            cudaMalloc((void**)&Keys, memSizes);
-
             cudaMalloc((void**)&KeyPoints, memSizes);
         }
     }
     
     // 图像信息赋值
-    size_t memSize = width * height * sizeof(uchar1);
-    cudaMemcpy(d_srcs[level], src.data, memSize, cudaMemcpyHostToDevice);
+    // size_t memSize = width * height * sizeof(uchar1);
+    // cudaMemcpy(d_srcs[level], src.data, memSize, cudaMemcpyHostToDevice);
 }
 
 void ORB_SLAM3::ORBextractor::GBandCD_CUDA(cv::InputArray image, int level)
@@ -407,7 +450,7 @@ void ORB_SLAM3::ORBextractor::ExtractorPoint(cv::InputArray image, int level, ve
     dim3 block(16, 16);
     dim3 grid(divUp(Cols - 2*16, block.x),
               divUp(Rows - 2*16, block.y));
-    fast<<<grid, block>>>(d_srcs[level], Threshold, threshold_tab_cuda, dev_counter, Keys, score_mats[level], Cols, Rows);
+    fast<<<grid, block>>>(d_srcs[level], Threshold, threshold_tab_cuda, dev_counter, Keys[level], score_mats[level], Cols, Rows);
 
     int* n;
     n = (int*)malloc(sizeof(int));
@@ -420,7 +463,7 @@ void ORB_SLAM3::ORBextractor::ExtractorPoint(cv::InputArray image, int level, ve
 
     dim3 block_nm(64);
     dim3 grid_nm(divUp(*n, block_nm.x));
-    nonmaxSuppression<<<grid_nm, block_nm>>>(Keys, *n, score_mats[level], kp_counter, KeyPoints, Cols, Rows);
+    nonmaxSuppression<<<grid_nm, block_nm>>>(Keys[level], *n, score_mats[level], kp_counter, KeyPoints, Cols, Rows);
 
     int* num;
     num = (int*)malloc(sizeof(int));
@@ -461,11 +504,7 @@ void ORB_SLAM3::ORBextractor::ExtractorPointStream(std::vector<cv::Mat> &mvImage
     const int W = 35;
 
     // 初始化 DtoH 数组
-    vector<ushort3*> keys;
-    for (int i = 0;i < nlevels;i++) {
-        ushort3* _k = (ushort3*)malloc(10000 * sizeof(ushort3));
-        keys.push_back(_k);
-    }
+    
     vector<int> keysNum;
     keysNum.resize(nlevels);
 
@@ -481,58 +520,194 @@ void ORB_SLAM3::ORBextractor::ExtractorPointStream(std::vector<cv::Mat> &mvImage
 
     int* num = (int*)malloc(nlevels * sizeof(int));
 
+    vector<cv::Mat> imgs;
     for (int level = 0; level < nlevels; level++)
     {
         const int Cols = mvImagePyramid[level].cols;
         const int Rows = mvImagePyramid[level].rows;
         size_t memSize = Cols * Rows * sizeof(uchar1);
         cudaMemset(score_mats[level], 0, memSize);
+
+        cv::Mat img = mvImagePyramid[level].clone();
+        imgs.push_back(img);
     }
 
     // CUDA stream
     for (int level = 0; level < nlevels; level++)
     {
-        cv::Mat img = mvImagePyramid[level].clone();
-        const int Cols = img.cols;
-        const int Rows = img.rows;
+        const int Cols = imgs[level].cols;
+        const int Rows = imgs[level].rows;
 
         size_t memSize = Cols * Rows * sizeof(uchar1);
-        cudaMemcpyAsync(d_srcs[level], img.data, memSize, cudaMemcpyHostToDevice, streams[level]);
+        cudaMemcpyAsync(d_srcs[level], imgs[level].data, memSize, cudaMemcpyHostToDevice, streams[level]);
 
         // fast角点提取
         dim3 block(16, 16);
         dim3 grid(divUp(Cols - 2*16, block.x),
                 divUp(Rows - 2*16, block.y));
-        fast<<<grid, block, 0, streams[level]>>>(d_srcs[level], Threshold, threshold_tab_cuda, &dev_counter[level], Keys, score_mats[level], Cols, Rows);
+        fast<<<grid, block, 0, streams[level]>>>(d_srcs[level], Threshold, threshold_tab_cuda, &dev_counter[level], Keys[level], score_mats[level], Cols, Rows);
 
         cudaMemcpyAsync(&n[level], &dev_counter[level], sizeof(int), cudaMemcpyDeviceToHost, streams[level]);
 
         // 非极大值抑制
         dim3 block_nm(64);
         dim3 grid_nm(divUp(n[level], block_nm.x));
-        nonmaxSuppression<<<grid_nm, block_nm, 0, streams[level]>>>(Keys, n[level], score_mats[level], &kp_counter[level], KeyPoints, Cols, Rows);
+        nonmaxSuppression<<<grid_nm, block_nm, 0, streams[level]>>>(Keys[level], n[level], score_mats[level], &kp_counter[level], KeyPoints, Cols, Rows);
 
         cudaMemcpyAsync(&num[level], &kp_counter[level], sizeof(int), cudaMemcpyDeviceToHost, streams[level]);
         cudaMemcpyAsync(keys[level], KeyPoints, num[level] * sizeof(ushort3), cudaMemcpyDeviceToHost, streams[level]);
     }
 
-    cudaDeviceSynchronize();
+    // cudaDeviceSynchronize();
 
     // for (int level = 0;level < nlevels;level++) {
     //     cout<< "key point number: " << num[level] <<endl;
     // }
 
-    // for (int pidx = 0; pidx < *num; pidx++)
-    // {
-    //     cv::KeyPoint kp;
-    //     kp.pt.x = kptsLoc[pidx].x - 16;
-    //     kp.pt.y = kptsLoc[pidx].y - 16;
-    //     kp.response = kptsLoc[pidx].z;
-    //     kp.octave = level;
-    //     kp.size = 0;
-    //     // vKeys.push_back(kp);
-    // }
+    // 保存特征点信息
+    for (int level = 0;level < nlevels;level++) {
+        cv::Mat img = mvImagePyramid[level].clone();
+        for (int pidx = 0; pidx < num[level]; pidx++)
+        {
+            cv::KeyPoint kp;
+            kp.pt.x = keys[level][pidx].x - 16;
+            kp.pt.y = keys[level][pidx].y - 16;
+            kp.response = keys[level][pidx].z;
+            kp.octave = level;
+            kp.size = 0;
+            vKeys[level].push_back(kp);
 
+            // cv::Scalar color(0, 255, 0);
+            // cv::circle(img, {keys[level][pidx].x, keys[level][pidx].y}, 3, color);
+        }
+        // cv::imshow("color coarse fast ", img);
+        // cv::waitKey();
+    }
+}
+
+void ORB_SLAM3::ORBextractor::ExtractorPointStream_ACC(std::vector<cv::Mat> &mvImagePyramid, vector<vector<cv::KeyPoint>> &vKeys, 
+                                                        vector<vector<vector<int>>> &vStats, vector<int> &nWd, vector<int> &nHt)
+{
+    // 初始化ACC加速数组
+    thrust::device_vector<int*> stats_gpu;
+    thrust::device_vector<size_t> pitchs;
+    stats_gpu.resize(nlevels);
+    pitchs.resize(nlevels);
+    for (int level = 0;level<nlevels;level++) {
+        int *stat_gpu;
+        size_t pitch;
+        int Wd = vStats[level][0].size();
+        int Ht = vStats[level].size();
+        cudaMallocPitch((void**)&stat_gpu, &pitch, sizeof(int) * Wd, Ht);
+        cudaMemset2D(stat_gpu, pitch, 1, sizeof(int)*Wd, Ht);
+        pitchs[level] = pitch;
+        for (int row = 0;row < Ht;row++) {
+            cudaMemcpy(&stat_gpu[row*(pitch/sizeof(int))], &vStats[level][row][0], sizeof(int)*Wd, cudaMemcpyHostToDevice);
+        }
+        stats_gpu[level] = stat_gpu;
+    }
+    // cout<< "ACC arr end!" <<endl;
+
+    // 初始化 DtoH 数组
+    vector<int> keysNum;
+    keysNum.resize(nlevels);
+
+    int *dev_counter;
+    cudaMalloc((void**)&dev_counter, nlevels * sizeof(int));
+    cudaMemset(dev_counter, 0, nlevels * sizeof(int));
+
+    int* n= (int*)malloc(nlevels * sizeof(int));
+
+    int *kp_counter;
+    cudaMalloc((void**)&kp_counter, nlevels * sizeof(int));
+    cudaMemset(kp_counter, 0, nlevels * sizeof(int));
+
+    int* num = (int*)malloc(nlevels * sizeof(int));
+
+    vector<cv::Mat> imgs;
+    for (int level = 0; level < nlevels; level++)
+    {
+        const int Cols = mvImagePyramid[level].cols;
+        const int Rows = mvImagePyramid[level].rows;
+        size_t memSize = Cols * Rows * sizeof(uchar1);
+        cudaMemset(score_mats[level], 0, memSize);
+
+        cv::Mat img = mvImagePyramid[level].clone();
+        imgs.push_back(img);
+    }
+
+    // CUDA stream
+    for (int level = 0; level < nlevels; level++)
+    {
+        const int Cols = imgs[level].cols;
+        const int Rows = imgs[level].rows;
+
+        // int *stat_gpu;
+        // size_t pitch;
+        // int Wd = vStats[level][0].size();
+        // int Ht = vStats[level].size();
+        // cudaMallocPitch((void**)&stat_gpu, &pitch, sizeof(int) * Wd, Ht);
+        // cudaMemset2D(stat_gpu, pitch, 1, sizeof(int)*Wd, Ht);
+        // for (int row = 0;row < Ht;row++) {
+        //     cudaMemcpyAsync(&stat_gpu[row*(pitch/sizeof(int))], &vStats[level][row][0], sizeof(int)*Wd, cudaMemcpyHostToDevice);
+        // }
+
+        size_t memSize = Cols * Rows * sizeof(uchar1);
+        cudaMemcpyAsync(d_srcs[level], imgs[level].data, memSize, cudaMemcpyHostToDevice, streams[level]);
+
+        // fast角点提取
+        dim3 block(16, 16);
+        dim3 grid(divUp(Cols - 2*16, block.x),
+                divUp(Rows - 2*16, block.y));
+        fast_ACC<<<grid, block, 0, streams[level]>>>(d_srcs[level], Threshold, threshold_tab_cuda,
+                                                    stats_gpu[level], pitchs[level], nWd[level], nHt[level],
+                                                    &dev_counter[level], Keys[level], score_mats[level],
+                                                    Cols, Rows);
+        
+        cudaMemcpyAsync(&n[level], &dev_counter[level], sizeof(int), cudaMemcpyDeviceToHost, streams[level]);
+
+        // 非极大值抑制
+        if (n[level] > 0 && n[level] < 10000) {
+            dim3 block_nm(64);
+            dim3 grid_nm(divUp(n[level], block_nm.x));
+            nonmaxSuppression<<<grid_nm, block_nm, 0, streams[level]>>>(Keys[level], n[level], score_mats[level], &kp_counter[level], KeyPoints, Cols, Rows);
+
+            cudaMemcpyAsync(&num[level], &kp_counter[level], sizeof(int), cudaMemcpyDeviceToHost, streams[level]);
+            cudaMemcpyAsync(keys[level], KeyPoints, num[level] * sizeof(ushort3), cudaMemcpyDeviceToHost, streams[level]);
+        }
+        else {
+            num[level] = 0;
+        }
+    }
+
+    cudaDeviceSynchronize();
+
+    // 保存特征点信息
+    for (int level = 0;level < nlevels;level++) {
+        cv::Mat img = mvImagePyramid[level].clone();
+        for (int pidx = 0; pidx < num[level]; pidx++)
+        {
+            cv::KeyPoint kp;
+            kp.pt.x = keys[level][pidx].x - 16;
+            kp.pt.y = keys[level][pidx].y - 16;
+            kp.response = keys[level][pidx].z;
+            kp.octave = level;
+            kp.size = 0;
+            vKeys[level].push_back(kp);
+        }
+    }
+
+    cudaFree(dev_counter);
+    cudaFree(kp_counter);
+
+    free(n);
+    free(num);
+
+    if (!stats_gpu.empty()) {
+        for (int i=0;i<nlevels;i++) {
+            cudaFree(stats_gpu[i]);
+        }
+    }
 }
 
 // 释放内存空间
